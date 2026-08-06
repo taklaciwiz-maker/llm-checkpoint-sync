@@ -2,7 +2,7 @@ name: B2 to Google Drive Sync
 
 on:
   schedule:
-    - cron: '*/20 * * * *'   # her 20 dakikada bir
+    - cron: '*/20 * * * *'   # her 20 dakikada bir (v2)
   workflow_dispatch: {}       # elle de tetiklenebilir
 
 jobs:
