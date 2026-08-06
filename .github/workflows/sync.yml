@@ -1,0 +1,37 @@
+name: B2 to Google Drive Sync
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'   # her 20 dakikada bir
+  workflow_dispatch: {}       # elle de tetiklenebilir
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install rclone
+        run: |
+          curl -s https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf << 'EOF'
+          [b2remote]
+          type = b2
+          account = ${{ secrets.B2_ACCOUNT }}
+          key = ${{ secrets.B2_KEY }}
+
+          [gdrive]
+          type = drive
+          scope = drive
+          token = ${{ secrets.GDRIVE_TOKEN }}
+          EOF
+
+      - name: Sync B2 -> Google Drive (kalici arsiv, hicbir sey silinmez)
+        run: |
+          rclone copy "b2remote:${{ secrets.B2_BUCKET }}" "gdrive:turkish_llm_checkpoints" \
+            --ignore-existing \
+            --transfers 4 \
+            --checkers 8 \
+            -v
