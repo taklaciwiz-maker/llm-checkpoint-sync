@@ -2,8 +2,8 @@ name: B2 to Google Drive Sync
 
 on:
   schedule:
-    - cron: '*/20 * * * *'   # her 20 dakikada bir (v2)
-  workflow_dispatch: {}       # elle de tetiklenebilir
+    - cron: "7,27,47 * * * *"
+  workflow_dispatch: {}
 
 jobs:
   sync:
@@ -30,6 +30,8 @@ jobs:
 
       - name: Sync B2 -> Google Drive (kalici arsiv, hicbir sey silinmez)
         run: |
+          echo "Tetikleyen olay: $GITHUB_EVENT_NAME"
+          date -u
           rclone copy "b2remote:${{ secrets.B2_BUCKET }}" "gdrive:turkish_llm_checkpoints" \
             --ignore-existing \
             --transfers 4 \
