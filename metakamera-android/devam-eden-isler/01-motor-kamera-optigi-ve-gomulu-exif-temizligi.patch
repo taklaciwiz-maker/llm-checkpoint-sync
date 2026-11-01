@@ -1,0 +1,3060 @@
+diff --git a/metakamera-android/src/com/metakamera/core/tiff/BrandTraces.java b/metakamera-android/src/com/metakamera/core/tiff/BrandTraces.java
+index e16c25d..10a6fca 100644
+--- a/metakamera-android/src/com/metakamera/core/tiff/BrandTraces.java
++++ b/metakamera-android/src/com/metakamera/core/tiff/BrandTraces.java
+@@ -1,7 +1,9 @@
+ package com.metakamera.core.tiff;
+ 
+ import com.metakamera.core.ByteUtils;
++import com.metakamera.core.EditSpec;
+ 
++import java.util.ArrayList;
+ import java.util.List;
+ 
+ import static com.metakamera.core.tiff.TiffFile.*;
+@@ -35,12 +37,19 @@ import static com.metakamera.core.tiff.TiffFile.*;
+  * are removed ONLY when their decoded text
+  * <ul>
+  *   <li>contains the OLD Make or OLD Model (IFD0/IFD1, trimmed, case-insensitive), or</li>
++ *   <li>contains the old make's main brand TOKEN as a whole word (case-insensitive): the leading
++ *       letters of the old Make's first word when they are at least 4 letters long, e.g.
++ *       "OLYMPUS" of "OLYMPUS IMAGING CORP." (so the camera default ImageDescription
++ *       "OLYMPUS DIGITAL CAMERA" goes), "CASIO" of "CASIO COMPUTER CO.,LTD.", "HUAWEI",
++ *       "samsung", "Xiaomi", "Canon"; or</li>
+  *   <li>starts with "oplus_" (OPPO/OnePlus/realme feature bits written to UserComment).</li>
+  * </ul>
+  * An old value that equals the value being written (e.g. Apple → Apple) is not a trace of the
+- * original brand and is not used (this also keeps a second identical edit a no-op). One-character
+- * values are ignored, and values of 2-3 characters ("LG", "HTC", "LGE") must match as a whole word
+- * so that e.g. Make "LGE" does not remove a comment saying "college".
++ * original brand and is not used (this also keeps a second identical edit a no-op); likewise a
++ * token equal to the new Make's token ("OLYMPUS IMAGING CORP." → "OLYMPUS CORPORATION"). One-
++ * character values are ignored, and values of 2-3 characters ("LG", "HTC", "LGE") must match as a
++ * whole word so that e.g. Make "LGE" does not remove a comment saying "college"; tokens always
++ * match as a whole word ("casiopeia" does not carry the brand "CASIO").
+  */
+ final class BrandTraces {
+ 
+@@ -88,11 +97,80 @@ final class BrandTraces {
+         needles.add(o);
+     }
+ 
++    /** Shortest brand token that is used (shorter first words are too ambiguous: "LGE", "HMD"). */
++    static final int MIN_TOKEN = 4;
++
++    /**
++     * The main brand token of a Make: the leading letters of its first word ("OLYMPUS" of
++     * "OLYMPUS IMAGING CORP.", "Hewlett" of "Hewlett-Packard"), or null when shorter than
++     * {@link #MIN_TOKEN} letters or absent.
++     */
++    static String brandToken(String make) {
++        if (make == null) return null;
++        String m = make.replace('\0', ' ').trim();
++        int n = 0;
++        while (n < m.length() && Character.isLetter(m.charAt(n))) n++;
++        return n < MIN_TOKEN ? null : m.substring(0, n);
++    }
++
++    /**
++     * Adds the brand token of {@code oldMake} to {@code words} unless there is none, it is already
++     * listed, or it equals (ignoring case) the token of the make being written ({@code newMake}).
++     */
++    static void addToken(List<String> words, String oldMake, String newMake) {
++        String t = brandToken(oldMake);
++        if (t == null) return;
++        String n = newMake == null ? null : brandToken(newMake);
++        if (n != null && n.equalsIgnoreCase(t)) return;
++        for (int i = 0; i < words.size(); i++) {
++            if (words.get(i).equalsIgnoreCase(t)) return;
++        }
++        words.add(t);
++    }
++
++    /** What identifies the original brand in free text: old Make/Model values and brand tokens. */
++    static final class Identity {
++        /** Old Make / Model values (substring match, whole word below 4 characters). */
++        final List<String> needles = new ArrayList<String>(4);
++        /** Brand tokens (always whole word). */
++        final List<String> words = new ArrayList<String>(2);
++
++        boolean isEmpty() {
++            return needles.isEmpty() && words.isEmpty();
++        }
++    }
++
++    /**
++     * The original identity of {@code tf} (IFD0 and IFD1 Make/Model, read before any edit) with
++     * the values/tokens equal to what {@code spec} writes left out.
++     */
++    static Identity oldIdentity(TiffFile tf, EditSpec spec) {
++        Identity id = new Identity();
++        TiffIfd[] ifds = {tf.ifd0, tf.ifd1};
++        for (TiffIfd ifd : ifds) {
++            if (ifd == null) continue;
++            String make = tf.string(ifd.find(TiffFile.TAG_MAKE));
++            addNeedle(id.needles, make, spec.make);
++            addNeedle(id.needles, tf.string(ifd.find(TiffFile.TAG_MODEL)), spec.model);
++            addToken(id.words, make, spec.make);
++        }
++        return id;
++    }
++
+     /**
+      * True when the raw value {@code v} of a free-text tag carries the old brand: any of its
+      * plausible decodings starts with "oplus_" or contains one of the {@code needles}.
+      */
+     static boolean isBrandText(byte[] v, boolean userComment, List<String> needles) {
++        return isBrandText(v, userComment, needles, null);
++    }
++
++    /**
++     * True when the raw value {@code v} of a free-text tag carries the old brand: any of its
++     * plausible decodings starts with "oplus_", contains one of the {@code needles}, or contains
++     * one of the brand-token {@code words} as a whole word.
++     */
++    static boolean isBrandText(byte[] v, boolean userComment, List<String> needles, List<String> words) {
+         if (v == null || v.length == 0) return false;
+         String[] texts = decodings(v, userComment);
+         for (String s : texts) {
+@@ -100,10 +178,39 @@ final class BrandTraces {
+             for (int i = 0; i < needles.size(); i++) {
+                 if (containsNeedle(s, needles.get(i))) return true;
+             }
++            if (words == null) continue;
++            for (int i = 0; i < words.size(); i++) {
++                if (containsWord(s, words.get(i))) return true;
++            }
+         }
+         return false;
+     }
+ 
++    static boolean isBrandText(byte[] v, boolean userComment, Identity id) {
++        return isBrandText(v, userComment, id.needles, id.words);
++    }
++
++    /**
++     * Vendor label for the report: the MakerNote's ASCII signature ("HUAWEI", "Apple iOS") or the
++     * old Make; null when neither is available.
++     */
++    static String makerNoteVendor(TiffFile tf, TiffEntry mn, String oldMake) {
++        if (mn.valuePos >= 0 && mn.byteLen > 0) {
++            StringBuilder sb = new StringBuilder();
++            int n = (int) Math.min(16, mn.byteLen);
++            for (int i = 0; i < n && mn.valuePos + i < tf.d.length; i++) {
++                int c = tf.d[mn.valuePos + i] & 0xFF;
++                boolean alnum = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
++                if (alnum || (c == ' ' && sb.length() > 0)) sb.append((char) c);
++                else break;
++            }
++            String s = sb.toString().trim();
++            if (s.length() >= 3 && Character.isLetter(s.charAt(0))) return s;
++        }
++        if (oldMake != null && oldMake.trim().length() > 0) return oldMake.trim();
++        return null;
++    }
++
+     /**
+      * The value decoded every way a phone/Windows/exiftool may have written it: 8-bit text
+      * (UTF-8, Latin-1 fallback) and UTF-16 in both byte orders (UserComment "UNICODE" follows the
+@@ -194,6 +301,19 @@ final class BrandTraces {
+         return false;
+     }
+ 
++    /** Case-insensitive whole-word test (word characters: letters and digits). */
++    static boolean containsWord(String hay, String word) {
++        int n = word.length();
++        if (n == 0) return false;
++        for (int i = 0; i + n <= hay.length(); i++) {
++            if (!hay.regionMatches(true, i, word, 0, n)) continue;
++            boolean before = i == 0 || !Character.isLetterOrDigit(hay.charAt(i - 1));
++            boolean after = i + n == hay.length() || !Character.isLetterOrDigit(hay.charAt(i + n));
++            if (before && after) return true;
++        }
++        return false;
++    }
++
+     /** "0x9AAA" (locale independent). */
+     static String hex(int tag) {
+         String h = Integer.toHexString(tag & 0xFFFF);
+diff --git a/metakamera-android/src/com/metakamera/core/tiff/ExifTiff.java b/metakamera-android/src/com/metakamera/core/tiff/ExifTiff.java
+index 899612d..4bd0e62 100644
+--- a/metakamera-android/src/com/metakamera/core/tiff/ExifTiff.java
++++ b/metakamera-android/src/com/metakamera/core/tiff/ExifTiff.java
+@@ -8,6 +8,7 @@ import com.metakamera.core.UnsupportedFormatException;
+ import com.metakamera.core.icc.IccProfileEditor;
+ 
+ import java.io.IOException;
++import java.util.List;
+ 
+ import static com.metakamera.core.tiff.TiffFile.*;
+ 
+@@ -31,6 +32,17 @@ public final class ExifTiff {
+      * place are appended at the end; IFDs that need new entries are re-written at the end and the
+      * pointer to them updated.
+      *
++     * <p>Camera optics (Exif IFD; a missing Exif IFD is created when one of them is to be set):
++     * FocalLength (RATIONAL n/1000), FocalLengthIn35mmFormat (SHORT), FNumber (RATIONAL n/100)
++     * with ApertureValue (APEX 2·log2(N), n/1000) and PixelX/YDimension (existing SHORT/LONG type
++     * kept, LONG when created or &gt; 65535) are set or created; MaxApertureValue and
++     * LensSpecification are only updated when present. Copies of these tags misplaced in IFD0 are
++     * updated too. Values already equal at the written precision are left alone.
++     *
++     * <p>A JPEG thumbnail (IFD1) that carries its own EXIF block (Xiaomi copies the full original
++     * EXIF into it) gets that block edited with {@link #scrubInPlace} (same size, report lines
++     * prefixed "Küçük resim: ").
++     *
+      * @param maxSize maximum allowed result size (JPEG APP1: 65527; other containers: Integer.MAX_VALUE).
+      *                If the append strategy would exceed it, a compacting fallback is used; if even that
+      *                does not fit an UnsupportedFormatException is thrown.
+@@ -59,11 +71,57 @@ public final class ExifTiff {
+         return out;
+     }
+ 
++    /**
++     * Applies {@code spec} to an EXIF TIFF block embedded in {@code buf} WITHOUT changing its size
++     * or moving any value — for secondary EXIF blocks whose container cannot be re-laid out (MPF
++     * secondary images, gain maps, HEIF preview/thumbnail items). Only the bytes inside
++     * {@code [tiffOffset, tiffOffset + tiffLength)} (which must start at the "II"/"MM" byte-order
++     * mark) are ever written.
++     *
++     * <ul>
++     *   <li>Identity strings — Make, Model, Software, HostComputer, LensMake, LensModel in IFD0,
++     *       the Exif IFD and IFD1 (only where they exist): a non-null value that fits with its NUL
++     *       into the existing slot (inline 4 bytes, or {@code count} bytes out of line) is written
++     *       NUL-padded keeping the count (an inline count may grow to 4); a value that does not fit
++     *       blanks the slot (all NUL); "" blanks the slot. Nothing is created.</li>
++     *   <li>{@link EditSpec#removeMakerNote}: the MakerNote, the vendor-only tags and the
++     *       brand-bearing free-text tags (same rules as {@link #edit}) are removed in place: the
++     *       following 12-byte entries and the next-IFD pointer move left, the entry count is
++     *       decremented, the freed bytes at the end of the IFD and the removed out-of-line values
++     *       are zero-filled (bytes still referenced by another entry are kept).
++     *       {@link EditSpec#clearSerials} does the same for BodySerialNumber, LensSerialNumber,
++     *       CameraOwnerName and ImageUniqueID.</li>
++     *   <li>Camera optics (FocalLength, FocalLengthIn35mmFormat, FNumber, ApertureValue,
++     *       MaxApertureValue, LensSpecification, PixelX/YDimension): existing RATIONAL / SHORT /
++     *       LONG values are overwritten in place (a SHORT pixel size becomes LONG when the value
++     *       needs it); nothing is created.</li>
++     * </ul>
++     * The EXIF block of an IFD1 JPEG thumbnail inside the block is scrubbed the same way.
++     * Report lines are the Turkish lines of {@link #edit} prefixed with {@code where + ": "}, e.g.
++     * "MPF görüntü 2: EXIF Make: samsung → Apple" (no prefix when {@code where} is null/empty;
++     * thumbnail lines: "MPF görüntü 2, küçük resim: ...").
++     *
++     * <p>Never throws. Returns false when the block cannot be parsed (bad bounds, byte order,
++     * header or IFD0): {@code buf} and {@code report} are then left untouched. Returns true when it
++     * was parsed and processed, whether or not anything had to change (a changed block adds
++     * report lines). A second call with the same spec changes nothing.
++     */
++    public static boolean scrubInPlace(byte[] buf, int tiffOffset, int tiffLength, EditSpec spec, EditReport report,
++                                       String where) {
++        return TiffScrubber.scrub(buf, tiffOffset, tiffLength, spec, report, where);
++    }
++
+     /**
+      * Builds a new minimal, spec-valid EXIF TIFF block (little-endian) containing the non-empty
+      * identity fields of {@code spec} plus the tags EXIF requires (XResolution, YResolution,
+      * ResolutionUnit, YCbCrPositioning, Exif IFD with ExifVersion 0232, FlashpixVersion,
+      * ColorSpace, ComponentsConfiguration, and PixelX/YDimension when width/height > 0).
++     *
++     * <p>The camera-module fields of {@code spec} are written too when given: FocalLength,
++     * FocalLengthIn35mmFormat, FNumber with its APEX ApertureValue, and PixelX/YDimension from
++     * {@link EditSpec#exifImageWidth}/{@link EditSpec#exifImageHeight} (which override
++     * {@code width}/{@code height}). MaxApertureValue and LensSpecification are only ever updated,
++     * never created, so they are not written here.
+      */
+     public static byte[] createMinimal(EditSpec spec, int width, int height) {
+         TiffWriter w = new TiffWriter(true, 512);
+@@ -88,7 +146,20 @@ public final class ExifTiff {
+         ex.add(new TiffWriter.WEntry(TAG_COMPONENTS_CONFIGURATION, T_UNDEFINED, 4, new byte[]{1, 2, 3, 0}));
+         ex.add(new TiffWriter.WEntry(TAG_FLASHPIX_VERSION, T_UNDEFINED, 4, "0100".getBytes(ByteUtils.US_ASCII)));
+         ex.add(new TiffWriter.WEntry(TAG_COLOR_SPACE, T_SHORT, 1, w.short1(1)));
+-        if (width > 0 && height > 0) {
++        boolean dims = false;
++        if (spec != null) {
++            List<Optics.Req> optics = Optics.requests(spec);
++            TiffFile enc = TiffFile.encoder(true);
++            long[] tc = new long[2];
++            for (int i = 0; i < optics.size(); i++) {
++                Optics.Req q = optics.get(i);
++                if (!q.create) continue;
++                byte[] v = Optics.encode(enc, q, -1, tc);
++                ex.add(new TiffWriter.WEntry(q.tag, (int) tc[0], tc[1], v));
++                if (q.kind == Optics.K_DIM) dims = true;
++            }
++        }
++        if (!dims && width > 0 && height > 0) {
+             ex.add(new TiffWriter.WEntry(TAG_PIXEL_X, T_LONG, 1, w.long1(width)));
+             ex.add(new TiffWriter.WEntry(TAG_PIXEL_Y, T_LONG, 1, w.long1(height)));
+         }
+@@ -110,8 +181,10 @@ public final class ExifTiff {
+ 
+     /**
+      * Fills make, model, software, hostComputer, lensMake, lensModel, dateTimeOriginal,
+-     * offsetTimeOriginal, hasExif, hasMakerNote, gpsStatus. Never throws on corrupt data
+-     * (best effort; sets what it could read).
++     * offsetTimeOriginal, focalLengthMm, focalLength35mm, fNumber, exifImageWidth,
++     * exifImageHeight, hasExif, hasMakerNote, gpsStatus. Never throws on corrupt data
++     * (best effort; sets what it could read). The optics/pixel-size fields come from the Exif IFD
++     * (or a copy misplaced in IFD0) and are only set when the value is known and positive.
+      */
+     public static void inspect(byte[] tiff, MediaInfo info) {
+         if (info == null) return;
+@@ -146,6 +219,26 @@ public final class ExifTiff {
+         } catch (RuntimeException e) {
+             // best effort
+         }
++        try {
++            TiffIfd[] where = {tf.exif, tf.ifd0};
++            for (TiffIfd ifd : where) {
++                if (ifd == null) continue;
++                double v;
++                if (info.focalLengthMm <= 0 && (v = positive(tf, ifd, TAG_FOCAL_LENGTH)) > 0) info.focalLengthMm = v;
++                if (info.fNumber <= 0 && (v = positive(tf, ifd, TAG_FNUMBER)) > 0) info.fNumber = v;
++                if (info.focalLength35mm <= 0 && (v = positive(tf, ifd, TAG_FOCAL_LENGTH_35MM)) > 0) {
++                    info.focalLength35mm = (int) Math.min(Integer.MAX_VALUE, Math.round(v));
++                }
++                if (info.exifImageWidth <= 0 && (v = positive(tf, ifd, TAG_PIXEL_X)) > 0) {
++                    info.exifImageWidth = (int) Math.min(Integer.MAX_VALUE, Math.round(v));
++                }
++                if (info.exifImageHeight <= 0 && (v = positive(tf, ifd, TAG_PIXEL_Y)) > 0) {
++                    info.exifImageHeight = (int) Math.min(Integer.MAX_VALUE, Math.round(v));
++                }
++            }
++        } catch (RuntimeException e) {
++            // best effort
++        }
+         try {
+             info.gpsStatus = gpsStatus(tf);
+         } catch (RuntimeException e) {
+@@ -161,6 +254,12 @@ public final class ExifTiff {
+         }
+     }
+ 
++    /** First value of {@code tag} in {@code ifd} when known and &gt; 0, else 0. */
++    private static double positive(TiffFile tf, TiffIfd ifd, int tag) {
++        double v = tf.number(ifd.find(tag), 0);
++        return Double.isNaN(v) || Double.isInfinite(v) || v <= 0 ? 0 : v;
++    }
++
+     /** "yok" / "var" / "maskelenmiş" (Android MediaProvider zeroes redacted GPS coordinates). */
+     private static String gpsStatus(TiffFile tf) {
+         if (tf.gps == null) return "yok";
+diff --git a/metakamera-android/src/com/metakamera/core/tiff/Optics.java b/metakamera-android/src/com/metakamera/core/tiff/Optics.java
+new file mode 100644
+index 0000000..e7f0ce7
+--- /dev/null
++++ b/metakamera-android/src/com/metakamera/core/tiff/Optics.java
+@@ -0,0 +1,331 @@
++package com.metakamera.core.tiff;
++
++import com.metakamera.core.EditSpec;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * Camera-module optics ({@link EditSpec#focalLengthMm}, {@link EditSpec#fNumber}, ...): value
++ * validation, the RATIONAL encoding shared by EXIF and XMP, "same value" tolerances and the
++ * (locale independent) report formatting.
++ *
++ * <p>Encodings: FocalLength n/1000 (6.765 mm → 6765/1000), FNumber n/100 (1.78 → 178/100),
++ * ApertureValue / MaxApertureValue as APEX 2·log2(N) in n/1000. A value whose numerator would not
++ * fit in 32 bits uses a 10× smaller denominator (down to /1); a value that still does not fit,
++ * or is not a positive finite number, is ignored. Values are compared with the precision they are
++ * written with, and apertures by their f-number (two decimals), so a second identical edit is a
++ * no-op even for vendor encodings such as Apple's ApertureValue 27767/23734 (f/1.5).
++ */
++public final class Optics {
++
++    /** Denominator of FocalLength (and the focal values of LensSpecification). */
++    public static final long FOCAL_DEN = 1000;
++    /** Denominator of FNumber (and the F values of LensSpecification). */
++    public static final long FNUMBER_DEN = 100;
++    /** Denominator of the APEX ApertureValue / MaxApertureValue. */
++    public static final long APEX_DEN = 1000;
++
++    private static final double LN2 = Math.log(2);
++    private static final long U32_MAX = 0xFFFFFFFFL;
++
++    private Optics() {
++    }
++
++    // ================================================================== public helpers
++
++    /** True for a finite value &gt; 0 that can be written as a RATIONAL with {@code den}. */
++    public static boolean valid(Double v, long den) {
++        return v != null && rational(v, den) != null;
++    }
++
++    /**
++     * {numerator, denominator} for {@code v} with the preferred denominator (10× smaller ones when
++     * the numerator would not fit in 32 bits); null for NaN, infinite, &lt;= 0, too small to be
++     * represented (rounds to 0) or too large values.
++     */
++    public static long[] rational(double v, long den) {
++        if (Double.isNaN(v) || Double.isInfinite(v) || v <= 0 || den <= 0) return null;
++        for (long d = den; d >= 1; d /= 10) {
++            double n = Math.floor(v * d + 0.5);
++            if (n <= U32_MAX) {
++                if (n < 1) return null;
++                return new long[]{(long) n, d};
++            }
++        }
++        return null;
++    }
++
++    /** APEX aperture value 2·log2(N) of an f-number. */
++    public static double apex(double fNumber) {
++        return 2 * Math.log(fNumber) / LN2;
++    }
++
++    /** f-number of an APEX aperture value: 2^(AV/2). */
++    public static double fNumberFromApex(double av) {
++        return Math.pow(2, av / 2);
++    }
++
++    /** {@code a} and {@code b} are equal at the precision of denominator {@code den} (both NaN = equal). */
++    public static boolean same(double a, double b, long den) {
++        if (Double.isNaN(a) || Double.isNaN(b)) return Double.isNaN(a) && Double.isNaN(b);
++        return Math.abs(a - b) <= 0.5 / den + 1e-9 * Math.max(1, Math.abs(b));
++    }
++
++    /** Two f-numbers that print the same with two decimals (1.78 vs 1.7800001, 1.5 vs 1.49999). */
++    public static boolean sameAperture(double fa, double fb) {
++        if (Double.isNaN(fa) || Double.isNaN(fb)) return false;
++        return Math.abs(fa - fb) < 0.005;
++    }
++
++    /**
++     * {@code v} rounded to at most {@code decimals} decimals without trailing zeros, '.' as the
++     * decimal separator (never locale dependent): 6.765 → "6.765", 24.0 → "24", 1.4 → "1.4".
++     * NaN / infinite → "?".
++     */
++    public static String fmt(double v, int decimals) {
++        if (Double.isNaN(v) || Double.isInfinite(v)) return "?";
++        long scale = 1;
++        for (int i = 0; i < decimals; i++) scale *= 10;
++        boolean neg = v < 0;
++        double a = Math.abs(v);
++        if (a * scale > 9e15) return (neg ? "-" : "") + Long.toString((long) Math.floor(a + 0.5));
++        long n = (long) Math.floor(a * scale + 0.5);
++        long ip = n / scale;
++        long fp = n % scale;
++        StringBuilder sb = new StringBuilder();
++        if (neg && n != 0) sb.append('-');
++        sb.append(ip);
++        if (fp != 0) {
++            StringBuilder f = new StringBuilder(Long.toString(fp));
++            while (f.length() < decimals) f.insert(0, '0');
++            int end = f.length();
++            while (end > 0 && f.charAt(end - 1) == '0') end--;
++            sb.append('.').append(f, 0, end);
++        }
++        return sb.toString();
++    }
++
++    /** "1.57-5.7 mm f/1.5-1.8" style text of a 4-value LensSpecification (unknown values → "?"). */
++    public static String lensSpecText(double[] v) {
++        if (v == null || v.length < 4) return "?";
++        String focal = range(v[0], v[1], 3);
++        String f = range(v[2], v[3], 2);
++        return focal + " mm f/" + f;
++    }
++
++    private static String range(double a, double b, int decimals) {
++        String x = fmt(known(a), decimals);
++        String y = fmt(known(b), decimals);
++        return x.equals(y) ? x : x + "-" + y;
++    }
++
++    /** NaN for values that EXIF treats as unknown (&lt;= 0, NaN, infinite). */
++    static double known(double v) {
++        return Double.isNaN(v) || Double.isInfinite(v) || v <= 0 ? Double.NaN : v;
++    }
++
++    // ================================================================== EXIF field requests
++
++    /** FocalLength: RATIONAL /1000, shown as "6.93 mm". */
++    static final int K_FOCAL = 0;
++    /** FNumber: RATIONAL /100, shown as "f/1.4". */
++    static final int K_FNUMBER = 1;
++    /** ApertureValue / MaxApertureValue: APEX RATIONAL /1000 of {@link Req#value} (an f-number), shown as "f/1.4". */
++    static final int K_APEX = 2;
++    /** FocalLengthIn35mmFormat: SHORT. */
++    static final int K_SHORT = 3;
++    /** PixelX/YDimension: SHORT or LONG (existing type kept; LONG when created or &gt; 65535). */
++    static final int K_DIM = 4;
++    /** LensSpecification: 4 RATIONALs (focal /1000, F /100; unknown = 0/0). */
++    static final int K_LENS_SPEC = 5;
++
++    /** One optics field to write. */
++    static final class Req {
++        final int tag;
++        final String name;
++        final int kind;
++        /** The value (K_APEX: the f-number, not the APEX value). */
++        final double value;
++        /** K_LENS_SPEC values (NaN = unknown). */
++        final double[] values;
++        /** May be created when missing (otherwise only an existing entry is updated). */
++        final boolean create;
++
++        Req(int tag, String name, int kind, double value, double[] values, boolean create) {
++            this.tag = tag;
++            this.name = name;
++            this.kind = kind;
++            this.value = value;
++            this.values = values;
++            this.create = create;
++        }
++    }
++
++    /**
++     * The EXIF optics fields requested by {@code spec}, in report order. Invalid values (see class
++     * comment; f-numbers below 1 give no ApertureValue; 35 mm focal lengths outside 1..65535;
++     * pixel sizes not given together or &lt;= 0) are left out.
++     */
++    static List<Req> requests(EditSpec spec) {
++        List<Req> r = new ArrayList<Req>(8);
++        if (spec == null) return r;
++        if (valid(spec.focalLengthMm, FOCAL_DEN)) {
++            r.add(new Req(TiffFile.TAG_FOCAL_LENGTH, "FocalLength", K_FOCAL, spec.focalLengthMm, null, true));
++        }
++        if (spec.focalLength35mm != null && spec.focalLength35mm > 0 && spec.focalLength35mm <= 0xFFFF) {
++            r.add(new Req(TiffFile.TAG_FOCAL_LENGTH_35MM, "FocalLengthIn35mmFormat", K_SHORT, spec.focalLength35mm, null, true));
++        }
++        if (valid(spec.fNumber, FNUMBER_DEN)) {
++            double n = spec.fNumber;
++            r.add(new Req(TiffFile.TAG_FNUMBER, "FNumber", K_FNUMBER, n, null, true));
++            if (n >= 1) { // APEX >= 0 (ApertureValue is unsigned)
++                r.add(new Req(TiffFile.TAG_APERTURE_VALUE, "ApertureValue", K_APEX, n, null, true));
++                r.add(new Req(TiffFile.TAG_MAX_APERTURE_VALUE, "MaxApertureValue", K_APEX, n, null, false));
++            }
++        }
++        double[] ls = spec.lensSpecification;
++        if (ls != null && ls.length == 4) {
++            double[] v = new double[4];
++            boolean any = false;
++            for (int i = 0; i < 4; i++) {
++                v[i] = known(ls[i]);
++                if (!Double.isNaN(v[i]) && rational(v[i], i < 2 ? FOCAL_DEN : FNUMBER_DEN) == null) v[i] = Double.NaN;
++                if (!Double.isNaN(v[i])) any = true;
++            }
++            if (any) r.add(new Req(TiffFile.TAG_LENS_SPECIFICATION, "LensSpecification", K_LENS_SPEC, 0, v, false));
++        }
++        Integer w = spec.exifImageWidth;
++        Integer h = spec.exifImageHeight;
++        if (w != null && h != null && w > 0 && h > 0) {
++            r.add(new Req(TiffFile.TAG_PIXEL_X, "PixelXDimension", K_DIM, w, null, true));
++            r.add(new Req(TiffFile.TAG_PIXEL_Y, "PixelYDimension", K_DIM, h, null, true));
++        }
++        return r;
++    }
++
++    /** True when the existing entry already holds {@code q}'s value (and a type that needs no rewrite). */
++    static boolean holds(TiffFile tf, TiffEntry e, Req q) {
++        switch (q.kind) {
++            case K_FOCAL:
++                return e.type == TiffFile.T_RATIONAL && e.count == 1 && same(tf.number(e, 0), q.value, FOCAL_DEN);
++            case K_FNUMBER:
++                return e.type == TiffFile.T_RATIONAL && e.count == 1 && same(tf.number(e, 0), q.value, FNUMBER_DEN);
++            case K_APEX: {
++                double av = tf.number(e, 0);
++                return e.type == TiffFile.T_RATIONAL && e.count == 1 && sameAperture(fNumberFromApex(av), q.value);
++            }
++            case K_SHORT:
++            case K_DIM:
++                return (e.type == TiffFile.T_SHORT || e.type == TiffFile.T_LONG) && e.count == 1
++                        && tf.number(e, 0) == q.value;
++            case K_LENS_SPEC: {
++                if (e.type != TiffFile.T_RATIONAL || e.count != 4) return false;
++                for (int i = 0; i < 4; i++) {
++                    if (!same(known(tf.number(e, i)), q.values[i], i < 2 ? FOCAL_DEN : FNUMBER_DEN)) return false;
++                }
++                return true;
++            }
++            default:
++                return false;
++        }
++    }
++
++    /**
++     * The new entry value for {@code q}: {type, count} in {@code typeCount}, bytes (file byte
++     * order) returned. {@code existingType} is the type of the entry being replaced (-1 = new).
++     */
++    static byte[] encode(TiffFile tf, Req q, int existingType, long[] typeCount) {
++        switch (q.kind) {
++            case K_FOCAL:
++                return rationalBytes(tf, q.value, FOCAL_DEN, typeCount);
++            case K_FNUMBER:
++                return rationalBytes(tf, q.value, FNUMBER_DEN, typeCount);
++            case K_APEX:
++                return rationalBytes(tf, Math.max(0, apex(q.value)), APEX_DEN, typeCount);
++            case K_SHORT: {
++                byte[] b = new byte[2];
++                tf.put16(b, 0, (int) q.value);
++                typeCount[0] = TiffFile.T_SHORT;
++                typeCount[1] = 1;
++                return b;
++            }
++            case K_DIM: {
++                long v = (long) q.value;
++                if (existingType == TiffFile.T_SHORT && v <= 0xFFFF) {
++                    byte[] b = new byte[2];
++                    tf.put16(b, 0, (int) v);
++                    typeCount[0] = TiffFile.T_SHORT;
++                    typeCount[1] = 1;
++                    return b;
++                }
++                byte[] b = new byte[4];
++                tf.put32(b, 0, v);
++                typeCount[0] = TiffFile.T_LONG;
++                typeCount[1] = 1;
++                return b;
++            }
++            case K_LENS_SPEC: {
++                byte[] b = new byte[32];
++                for (int i = 0; i < 4; i++) {
++                    long[] nd = Double.isNaN(q.values[i]) ? null : rational(q.values[i], i < 2 ? FOCAL_DEN : FNUMBER_DEN);
++                    if (nd != null) {
++                        tf.put32(b, 8 * i, nd[0]);
++                        tf.put32(b, 8 * i + 4, nd[1]);
++                    }
++                }
++                typeCount[0] = TiffFile.T_RATIONAL;
++                typeCount[1] = 4;
++                return b;
++            }
++            default:
++                throw new IllegalArgumentException("kind " + q.kind);
++        }
++    }
++
++    private static byte[] rationalBytes(TiffFile tf, double v, long den, long[] typeCount) {
++        long[] nd = rational(v, den);
++        if (nd == null) nd = new long[]{0, 1}; // APEX 0 (f/1.0) or a value that rounds to 0
++        byte[] b = new byte[8];
++        tf.put32(b, 0, nd[0]);
++        tf.put32(b, 4, nd[1]);
++        typeCount[0] = TiffFile.T_RATIONAL;
++        typeCount[1] = 1;
++        return b;
++    }
++
++    /** Report text of the current value of {@code e} for the field of {@code q} (no unit). */
++    static String oldText(TiffFile tf, TiffEntry e, Req q) {
++        if (q.kind == K_LENS_SPEC) {
++            double[] v = new double[4];
++            for (int i = 0; i < 4; i++) v[i] = tf.number(e, i);
++            return lensSpecText(v);
++        }
++        double v = tf.number(e, 0);
++        if (q.kind == K_APEX) v = Double.isNaN(v) ? v : fNumberFromApex(v);
++        return valueText(q.kind, v);
++    }
++
++    /** Report text of the new value of {@code q}. */
++    static String newText(Req q) {
++        if (q.kind == K_LENS_SPEC) return lensSpecText(q.values);
++        return valueText(q.kind, q.value);
++    }
++
++    private static String valueText(int kind, double v) {
++        switch (kind) {
++            case K_FOCAL:
++                return fmt(v, 3);
++            case K_FNUMBER:
++            case K_APEX:
++                return "f/" + fmt(v, 2);
++            default:
++                return fmt(v, 0);
++        }
++    }
++
++    /** Unit appended once at the end of a report line ("EXIF FocalLength: 6.7 → 6.93 mm"). */
++    static String unit(Req q) {
++        return q.kind == K_FOCAL ? " mm" : "";
++    }
++}
+diff --git a/metakamera-android/src/com/metakamera/core/tiff/TiffEditor.java b/metakamera-android/src/com/metakamera/core/tiff/TiffEditor.java
+index aaaa601..1240aca 100644
+--- a/metakamera-android/src/com/metakamera/core/tiff/TiffEditor.java
++++ b/metakamera-android/src/com/metakamera/core/tiff/TiffEditor.java
+@@ -50,10 +50,17 @@ final class TiffEditor {
+         for (int i = 0; i < tf.warnings.size(); i++) report.warn(tf.warnings.get(i));
+         TiffEditor ed = new TiffEditor(tf, spec, report);
+         ed.applyEdits();
+-        if (!ed.changed) return tiff;
++        if (!ed.changed) {
++            // the block itself is fine, but embedded JPEGs (thumbnail, Xiaomi preview) may carry their own EXIF
++            if (TiffScrubber.embeddedExif(tf).isEmpty()) return tiff;
++            byte[] copy = tiff.clone();
++            return TiffScrubber.scrubEmbedded(tf, copy, spec, report, null, 0) ? copy : tiff;
++        }
+         ed.dropBrokenLinks();
+         byte[] out = ed.commitAppend();
+         if (out.length > maxSize) out = ed.commitCompact(maxSize);
++        // EXIF of embedded JPEGs, edited in place (same size) in the new block
++        TiffScrubber.scrubEmbedded(out, spec, report);
+         return out;
+     }
+ 
+@@ -63,13 +70,7 @@ final class TiffEditor {
+         TiffIfd ifd0 = tf.ifd0;
+         String oldMake = tf.string(ifd0.find(TAG_MAKE));
+         // the original identity, read before anything is edited (brand-trace detection)
+-        List<String> oldIdentity = new ArrayList<String>(4);
+-        BrandTraces.addNeedle(oldIdentity, oldMake, spec.make);
+-        BrandTraces.addNeedle(oldIdentity, tf.string(ifd0.find(TAG_MODEL)), spec.model);
+-        if (tf.ifd1 != null) {
+-            BrandTraces.addNeedle(oldIdentity, tf.string(tf.ifd1.find(TAG_MAKE)), spec.make);
+-            BrandTraces.addNeedle(oldIdentity, tf.string(tf.ifd1.find(TAG_MODEL)), spec.model);
+-        }
++        BrandTraces.Identity oldIdentity = BrandTraces.oldIdentity(tf, spec);
+ 
+         setString(ifd0, TAG_MAKE, "Make", spec.make, true, "EXIF ");
+         setString(ifd0, TAG_MODEL, "Model", spec.model, true, "EXIF ");
+@@ -83,8 +84,9 @@ final class TiffEditor {
+             setString(tf.ifd1, TAG_HOST_COMPUTER, "HostComputer", spec.hostComputer, false, "EXIF IFD1 ");
+         }
+ 
+-        boolean wantLens = nonEmpty(spec.lensMake) || nonEmpty(spec.lensModel);
+-        if (tf.exif == null && wantLens) {
++        List<Optics.Req> optics = Optics.requests(spec);
++        boolean wantExif = nonEmpty(spec.lensMake) || nonEmpty(spec.lensModel) || createsAny(optics);
++        if (tf.exif == null && wantExif) {
+             if (tf.exifBroken) {
+                 // the old pointer leads nowhere usable: replace it with a fresh Exif IFD
+                 dropPointer(ifd0, TAG_EXIF_IFD, "Bozuk Exif IFD bağlantısı kaldırıldı");
+@@ -96,7 +98,10 @@ final class TiffEditor {
+             setString(tf.exif, TAG_LENS_MAKE, "LensMake", spec.lensMake, true, "EXIF ");
+             setString(tf.exif, TAG_LENS_MODEL, "LensModel", spec.lensModel, true, "EXIF ");
+             if (lensChanged) bumpExifVersion(tf.exif);
++            for (int i = 0; i < optics.size(); i++) setOptics(tf.exif, optics.get(i), true, "EXIF ");
+         }
++        // copies a writer misplaced in IFD0 (seen in real camera files): only updated
++        for (int i = 0; i < optics.size(); i++) setOptics(ifd0, optics.get(i), false, "EXIF IFD0 ");
+ 
+         if (spec.removeMakerNote) {
+             TiffIfd[] where = {tf.exif, ifd0};
+@@ -105,7 +110,7 @@ final class TiffEditor {
+                 List<TiffEntry> mns = ifd.findAll(TAG_MAKER_NOTE);
+                 for (int i = 0; i < mns.size(); i++) {
+                     TiffEntry mn = mns.get(i);
+-                    String vendor = makerNoteVendor(mn, oldMake);
++                    String vendor = BrandTraces.makerNoteVendor(tf, mn, oldMake);
+                     removeEntry(ifd, mn);
+                     r.change(vendor == null ? "MakerNote temizlendi" : "MakerNote temizlendi (" + vendor + ")");
+                 }
+@@ -167,9 +172,10 @@ final class TiffEditor {
+ 
+     /**
+      * Drops ImageDescription / UserComment / XP* text tags (IFD0, Exif IFD, IFD1) whose text names
+-     * the old make or model or carries OPPO/OnePlus "oplus_" feature bits; unrelated text is kept.
++     * the old make or model (or its brand token) or carries OPPO/OnePlus "oplus_" feature bits;
++     * unrelated text is kept.
+      */
+-    private void removeBrandTexts(List<String> oldIdentity) {
++    private void removeBrandTexts(BrandTraces.Identity oldIdentity) {
+         TiffIfd[] where = {tf.ifd0, tf.exif, tf.ifd1};
+         List<String> reported = new ArrayList<String>();
+         for (TiffIfd ifd : where) {
+@@ -201,6 +207,45 @@ final class TiffEditor {
+         return s != null && s.replace("\0", "").length() > 0;
+     }
+ 
++    private static boolean createsAny(List<Optics.Req> optics) {
++        for (int i = 0; i < optics.size(); i++) {
++            if (optics.get(i).create) return true;
++        }
++        return false;
++    }
++
++    /**
++     * Sets one camera-optics field (see {@link Optics}): an existing entry is replaced unless it
++     * already holds the value; a missing one is created only when {@code allowCreate} and the
++     * field may be created ({@link Optics.Req#create}).
++     */
++    private void setOptics(TiffIfd ifd, Optics.Req q, boolean allowCreate, String prefix) {
++        List<TiffEntry> es = ifd.findAll(q.tag);
++        long[] tc = new long[2];
++        if (es.isEmpty()) {
++            if (!allowCreate || !q.create) return;
++            byte[] v = Optics.encode(tf, q, -1, tc);
++            ifd.entries.add(TiffEntry.create(q.tag, (int) tc[0], tc[1], v));
++            ifd.structural = true;
++            changed = true;
++            r.change(prefix + q.name + " eklendi: " + Optics.newText(q) + Optics.unit(q));
++            return;
++        }
++        TiffEntry e = es.get(0);
++        for (int i = 1; i < es.size(); i++) removeEntry(ifd, es.get(i)); // duplicate entries
++        if (Optics.holds(tf, e, q)) {
++            if (es.size() > 1) r.change(prefix + q.name + ": yinelenen girdi kaldırıldı");
++            return;
++        }
++        String old = Optics.oldText(tf, e, q);
++        e.newValue = Optics.encode(tf, q, e.type, tc);
++        e.type = (int) tc[0];
++        e.count = tc[1];
++        e.dirty = true;
++        changed = true;
++        r.change(prefix + q.name + ": " + old + " → " + Optics.newText(q) + Optics.unit(q));
++    }
++
+     /**
+      * null = keep; "" = remove if present; otherwise set (create only when {@code allowCreate}).
+      */
+@@ -331,24 +376,6 @@ final class TiffEditor {
+         r.change("EXIF ExifVersion: " + new String(b, ByteUtils.US_ASCII) + " → 0232");
+     }
+ 
+-    /** Vendor label for the report: the MakerNote's ASCII signature ("HUAWEI", "Apple iOS") or the old Make. */
+-    private String makerNoteVendor(TiffEntry mn, String oldMake) {
+-        if (mn.valuePos >= 0 && mn.byteLen > 0) {
+-            StringBuilder sb = new StringBuilder();
+-            int n = (int) Math.min(16, mn.byteLen);
+-            for (int i = 0; i < n; i++) {
+-                int c = tf.d[mn.valuePos + i] & 0xFF;
+-                boolean alnum = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+-                if (alnum || (c == ' ' && sb.length() > 0)) sb.append((char) c);
+-                else break;
+-            }
+-            String s = sb.toString().trim();
+-            if (s.length() >= 3 && Character.isLetter(s.charAt(0))) return s;
+-        }
+-        if (oldMake != null && oldMake.trim().length() > 0) return oldMake.trim();
+-        return null;
+-    }
+-
+     /** ICC profile stored in EXIF (tag 0x8773): rewrite its device identity too. */
+     private void editEmbeddedIcc(TiffIfd ifd0) {
+         TiffEntry e = ifd0.find(TAG_ICC);
+@@ -455,7 +482,7 @@ final class TiffEditor {
+             System.arraycopy(nv, 0, e.field, 0, nv.length);
+             e.outValuePos = -1;
+             if (hadOld) fr.add(new int[]{e.valuePos, e.valuePos + (int) e.byteLen});
+-        } else if (hadOld && e.byteLen >= nv.length && exclusive(e)) {
++        } else if (hadOld && e.byteLen >= nv.length && tf.exclusive(e)) {
+             out.writeAt(e.valuePos, nv, 0, nv.length);
+             tf.put32(e.field, 0, e.valuePos);
+             e.outValuePos = e.valuePos;
+@@ -472,31 +499,6 @@ final class TiffEditor {
+         e.dirty = true;
+     }
+ 
+-    /** The entry's source slot is not shared with any other structure, value or image data. */
+-    private boolean exclusive(TiffEntry e) {
+-        int s = e.valuePos;
+-        int t = s + (int) e.byteLen;
+-        if (s < 8) return false;
+-        for (int i = 0; i < tf.ifdRanges.size(); i++) {
+-            int[] rg = tf.ifdRanges.get(i);
+-            if (s < rg[1] && rg[0] < t) return false;
+-        }
+-        for (int i = 0; i < tf.allEntries.size(); i++) {
+-            TiffEntry o = tf.allEntries.get(i);
+-            if (o == e || !o.hasOutOfLineSourceValue()) continue;
+-            if (s < o.valuePos + o.byteLen && o.valuePos < t) return false;
+-        }
+-        TiffIfd[] ifds = tf.allIfds();
+-        for (TiffIfd ifd : ifds) {
+-            List<int[]> dr = tf.dataRanges(ifd);
+-            for (int i = 0; i < dr.size(); i++) {
+-                int[] rg = dr.get(i);
+-                if (s < rg[1] && rg[0] < t) return false;
+-            }
+-        }
+-        return true;
+-    }
+-
+     private byte[] serialize(TiffIfd ifd) {
+         List<TiffEntry> es = ifd.sortedEntries();
+         int n = es.size();
+diff --git a/metakamera-android/src/com/metakamera/core/tiff/TiffFile.java b/metakamera-android/src/com/metakamera/core/tiff/TiffFile.java
+index 684acaf..35deb6b 100644
+--- a/metakamera-android/src/com/metakamera/core/tiff/TiffFile.java
++++ b/metakamera-android/src/com/metakamera/core/tiff/TiffFile.java
+@@ -23,7 +23,9 @@ final class TiffFile {
+     static final int T_LONG = 4;
+     static final int T_RATIONAL = 5;
+     static final int T_UNDEFINED = 7;
++    static final int T_SSHORT = 8;
+     static final int T_SLONG = 9;
++    static final int T_SRATIONAL = 10;
+     static final int T_IFD = 13;
+ 
+     static final int TAG_IMAGE_DESCRIPTION = 0x010E;
+@@ -38,6 +40,7 @@ final class TiffFile {
+     static final int TAG_SUB_IFDS = 0x014A;
+     static final int TAG_JPEG_IF = 0x0201;
+     static final int TAG_JPEG_IF_LEN = 0x0202;
++    static final int TAG_FNUMBER = 0x829D;
+     static final int TAG_EXIF_IFD = 0x8769;
+     static final int TAG_ICC = 0x8773;
+     static final int TAG_GPS_IFD = 0x8825;
+@@ -45,6 +48,9 @@ final class TiffFile {
+     static final int TAG_DATE_TIME_ORIGINAL = 0x9003;
+     static final int TAG_OFFSET_TIME_ORIGINAL = 0x9011;
+     static final int TAG_COMPONENTS_CONFIGURATION = 0x9101;
++    static final int TAG_APERTURE_VALUE = 0x9202;
++    static final int TAG_MAX_APERTURE_VALUE = 0x9205;
++    static final int TAG_FOCAL_LENGTH = 0x920A;
+     static final int TAG_MAKER_NOTE = 0x927C;
+     static final int TAG_USER_COMMENT = 0x9286;
+     static final int TAG_XIAOMI_SETTINGS = 0x9999;
+@@ -58,9 +64,11 @@ final class TiffFile {
+     static final int TAG_PIXEL_X = 0xA002;
+     static final int TAG_PIXEL_Y = 0xA003;
+     static final int TAG_INTEROP_IFD = 0xA005;
++    static final int TAG_FOCAL_LENGTH_35MM = 0xA405;
+     static final int TAG_IMAGE_UNIQUE_ID = 0xA420;
+     static final int TAG_CAMERA_OWNER = 0xA430;
+     static final int TAG_BODY_SERIAL = 0xA431;
++    static final int TAG_LENS_SPECIFICATION = 0xA432;
+     static final int TAG_LENS_MAKE = 0xA433;
+     static final int TAG_LENS_MODEL = 0xA434;
+     static final int TAG_LENS_SERIAL = 0xA435;
+@@ -120,6 +128,11 @@ final class TiffFile {
+         }
+     }
+ 
++    /** An empty instance whose byte-order helpers encode values for a new block. */
++    static TiffFile encoder(boolean le) {
++        return new TiffFile(new byte[0], le);
++    }
++
+     // ------------------------------------------------------------------ parsing
+ 
+     /** Parses the structure; throws only when the block is unusable (bad header or IFD0). */
+@@ -300,6 +313,117 @@ final class TiffFile {
+         return r;
+     }
+ 
++    /**
++     * The {@code index}-th value of a numeric entry (BYTE, SHORT, LONG, SSHORT, SLONG, RATIONAL,
++     * SRATIONAL) as a double; NaN when absent, unreadable or a rational with denominator 0
++     * (EXIF "unknown").
++     */
++    double number(TiffEntry e, int index) {
++        if (e == null || index < 0 || index >= e.count || e.valuePos < 0 || e.byteLen < 0) return Double.NaN;
++        int sz = typeSize(e.type);
++        long p = e.valuePos + (long) index * sz;
++        if (sz == 0 || p + sz > d.length) return Double.NaN;
++        int o = (int) p;
++        switch (e.type) {
++            case T_BYTE:
++                return d[o] & 0xFF;
++            case T_SHORT:
++                return u16(o);
++            case T_SSHORT:
++                return (short) u16(o);
++            case T_LONG:
++                return u32(o);
++            case T_SLONG:
++                return (int) u32(o);
++            case T_RATIONAL: {
++                long den = u32(o + 4);
++                return den == 0 ? Double.NaN : (double) u32(o) / den;
++            }
++            case T_SRATIONAL: {
++                int den = (int) u32(o + 4);
++                return den == 0 ? Double.NaN : (double) (int) u32(o) / den;
++            }
++            default:
++                return Double.NaN;
++        }
++    }
++
++    /**
++     * True when the entry's out-of-line source value lies inside the data and is not shared with
++     * any IFD structure, another entry's out-of-line value or referenced image data, i.e. it can
++     * be overwritten without side effects.
++     */
++    boolean exclusive(TiffEntry e) {
++        if (!e.hasOutOfLineSourceValue()) return false;
++        int s = e.valuePos;
++        int t = s + (int) e.byteLen;
++        if (s < 8) return false;
++        for (int i = 0; i < ifdRanges.size(); i++) {
++            int[] rg = ifdRanges.get(i);
++            if (s < rg[1] && rg[0] < t) return false;
++        }
++        for (int i = 0; i < allEntries.size(); i++) {
++            TiffEntry o = allEntries.get(i);
++            if (o == e || !o.hasOutOfLineSourceValue()) continue;
++            if (s < o.valuePos + o.byteLen && o.valuePos < t) return false;
++        }
++        TiffIfd[] ifds = allIfds();
++        for (TiffIfd ifd : ifds) {
++            List<int[]> dr = dataRanges(ifd);
++            for (int i = 0; i < dr.size(); i++) {
++                int[] rg = dr.get(i);
++                if (s < rg[1] && rg[0] < t) return false;
++            }
++        }
++        return true;
++    }
++
++    /**
++     * Byte ranges [start, end) of the block that nothing parsed refers to: not the header, an IFD
++     * structure, an out-of-line value or referenced image data (e.g. Xiaomi's preview JPEG after
++     * the thumbnail). Sorted by start.
++     */
++    List<int[]> unreferenced() {
++        List<int[]> used = new ArrayList<int[]>();
++        used.add(new int[]{0, 8});
++        used.addAll(ifdRanges);
++        for (int i = 0; i < allEntries.size(); i++) {
++            TiffEntry e = allEntries.get(i);
++            if (e.hasOutOfLineSourceValue()) used.add(new int[]{e.valuePos, e.valuePos + (int) e.byteLen});
++        }
++        TiffIfd[] ifds = allIfds();
++        for (TiffIfd ifd : ifds) used.addAll(dataRanges(ifd));
++        int[][] u = used.toArray(new int[used.size()][]);
++        Arrays.sort(u, new java.util.Comparator<int[]>() {
++            @Override
++            public int compare(int[] x, int[] y) {
++                return x[0] < y[0] ? -1 : (x[0] == y[0] ? 0 : 1);
++            }
++        });
++        List<int[]> gaps = new ArrayList<int[]>();
++        int cur = 0;
++        for (int[] r : u) {
++            if (r[0] > cur) gaps.add(new int[]{cur, Math.min(r[0], d.length)});
++            cur = Math.max(cur, r[1]);
++        }
++        if (cur < d.length) gaps.add(new int[]{cur, d.length});
++        return gaps;
++    }
++
++    /** [s, e) overlaps no IFD structure and no out-of-line entry value. */
++    boolean freeOfStructures(int s, int e) {
++        for (int i = 0; i < ifdRanges.size(); i++) {
++            int[] rg = ifdRanges.get(i);
++            if (s < rg[1] && rg[0] < e) return false;
++        }
++        for (int i = 0; i < allEntries.size(); i++) {
++            TiffEntry o = allEntries.get(i);
++            if (!o.hasOutOfLineSourceValue()) continue;
++            if (s < o.valuePos + o.byteLen && o.valuePos < e) return false;
++        }
++        return s >= 8;
++    }
++
+     /**
+      * Image data ranges [start, end) referenced by this IFD (JPEG thumbnail, strips).
+      * Invalid references are skipped. Returns an empty list when there are none.
+diff --git a/metakamera-android/src/com/metakamera/core/tiff/TiffScrubber.java b/metakamera-android/src/com/metakamera/core/tiff/TiffScrubber.java
+new file mode 100644
+index 0000000..f512595
+--- /dev/null
++++ b/metakamera-android/src/com/metakamera/core/tiff/TiffScrubber.java
+@@ -0,0 +1,499 @@
++package com.metakamera.core.tiff;
++
++import com.metakamera.core.ByteUtils;
++import com.metakamera.core.EditReport;
++import com.metakamera.core.EditSpec;
++import com.metakamera.core.UnsupportedFormatException;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.Collections;
++import java.util.Comparator;
++import java.util.List;
++
++import static com.metakamera.core.tiff.TiffFile.*;
++
++/**
++ * Size-preserving ("in place") version of {@link TiffEditor} for EXIF blocks embedded where they
++ * cannot grow or move: MPF secondary images, gain maps, HEIF preview items. Nothing is appended
++ * and no value moves; see {@link ExifTiff#scrubInPlace} for the rules.
++ *
++ * <p>All reads come from a pristine copy of the block, all writes go to a second copy that is
++ * copied back into the caller's buffer only after the whole scrub succeeded.
++ */
++final class TiffScrubber {
++
++    private static final Comparator<int[]> BY_START = new Comparator<int[]>() {
++        @Override
++        public int compare(int[] x, int[] y) {
++            return x[0] < y[0] ? -1 : (x[0] == y[0] ? 0 : 1);
++        }
++    };
++
++    private static final int[] ID_TAGS = {TAG_MAKE, TAG_MODEL, TAG_SOFTWARE, TAG_HOST_COMPUTER, TAG_LENS_MAKE, TAG_LENS_MODEL};
++    private static final String[] ID_NAMES = {"Make", "Model", "Software", "HostComputer", "LensMake", "LensModel"};
++    private static final int[] SERIAL_TAGS = {TAG_BODY_SERIAL, TAG_LENS_SERIAL, TAG_CAMERA_OWNER, TAG_IMAGE_UNIQUE_ID};
++    private static final String[] SERIAL_NAMES = {"BodySerialNumber", "LensSerialNumber", "CameraOwnerName", "ImageUniqueID"};
++
++    /** Report label of the EXIF block inside an IFD1 JPEG thumbnail. */
++    static final String THUMBNAIL_LABEL = "Küçük resim";
++    /** Embedded EXIF blocks are followed this many levels deep (a thumbnail's own thumbnail...). */
++    private static final int MAX_DEPTH = 2;
++
++    private final TiffFile tf;
++    /** Working copy (same length as {@code tf.d}). */
++    private final byte[] t;
++    private final EditSpec spec;
++    private final EditReport r = new EditReport();
++    /** The caller's label ("" when none) and the report prefix derived from it ("where: " or ""). */
++    private final String where;
++    private final String p;
++    private final int depth;
++    private final List<TiffEntry> removed = new ArrayList<TiffEntry>();
++    private final List<int[]> freed = new ArrayList<int[]>();
++    private boolean changed;
++
++    private TiffScrubber(TiffFile tf, EditSpec spec, String where, int depth) {
++        this.tf = tf;
++        this.t = tf.d.clone();
++        this.spec = spec;
++        this.where = where == null ? "" : where;
++        this.p = this.where.length() == 0 ? "" : this.where + ": ";
++        this.depth = depth;
++    }
++
++    /** See {@link ExifTiff#scrubInPlace}. */
++    static boolean scrub(byte[] buf, int off, int len, EditSpec spec, EditReport report, String where) {
++        return scrub(buf, off, len, spec, report, where, 0) >= 0;
++    }
++
++    /**
++     * Scrubs {@code [off, off+len)} of {@code buf} in place. Returns -1 when the block cannot be
++     * parsed (nothing written, nothing reported), 0 when nothing had to change, 1 when bytes changed.
++     */
++    static int scrub(byte[] buf, int off, int len, EditSpec spec, EditReport report, String where, int depth) {
++        if (buf == null || off < 0 || len < 8 || (long) off + len > buf.length) return -1;
++        try {
++            TiffFile tf;
++            try {
++                tf = TiffFile.parse(Arrays.copyOfRange(buf, off, off + len));
++            } catch (UnsupportedFormatException e) {
++                return -1;
++            }
++            if (spec == null) return 0;
++            TiffScrubber s = new TiffScrubber(tf, spec, where, depth);
++            s.run();
++            if (s.t.length != len) return -1; // cannot happen: nothing is ever appended
++            if (s.changed) System.arraycopy(s.t, 0, buf, off, len);
++            if (report != null) {
++                report.changes.addAll(s.r.changes);
++                report.warnings.addAll(s.r.warnings);
++            }
++            return s.changed ? 1 : 0;
++        } catch (RuntimeException e) {
++            return -1; // never reached for any input we know of; the caller's buffer is untouched
++        }
++    }
++
++    /** Report label of an EXIF block inside a JPEG stored in unreferenced bytes of the block. */
++    static final String PREVIEW_LABEL = "Önizleme";
++    /** At most this many embedded JPEGs are looked at per block. */
++    private static final int MAX_EMBEDDED = 16;
++
++    /**
++     * EXIF TIFF blocks ({offset, length, kind}) inside JPEG images embedded in the block:
++     * kind 0 = the IFD1 JPEG thumbnail (Xiaomi copies the whole original EXIF into it), kind 1 =
++     * a JPEG in bytes nothing refers to (Xiaomi HEIC: an "XMTH" 1440x1080 preview after the
++     * thumbnail). A thumbnail that overlaps EXIF structures is ignored.
++     */
++    static List<int[]> embeddedExif(TiffFile tf) {
++        List<int[]> r = new ArrayList<int[]>(2);
++        byte[] d = tf.d;
++        if (tf.ifd1 != null) {
++            long off = tf.pointerValue(tf.ifd1.find(TAG_JPEG_IF));
++            long len = tf.pointerValue(tf.ifd1.find(TAG_JPEG_IF_LEN));
++            if (off >= 8 && len >= 4 && off + len <= d.length && tf.freeOfStructures((int) off, (int) (off + len))) {
++                int s = (int) off;
++                if ((d[s] & 0xFF) == 0xFF && (d[s + 1] & 0xFF) == 0xD8) {
++                    int[] x = jpegExif(d, s + 2, (int) (off + len), null);
++                    if (x != null) r.add(new int[]{x[0], x[1], 0});
++                }
++            }
++        }
++        List<int[]> gaps = tf.unreferenced();
++        int[] stop = new int[1];
++        for (int g = 0; g < gaps.size() && r.size() < MAX_EMBEDDED; g++) {
++            int a = gaps.get(g)[0];
++            int b = gaps.get(g)[1];
++            for (int i = a; i + 4 <= b && r.size() < MAX_EMBEDDED; i++) {
++                if ((d[i] & 0xFF) != 0xFF || (d[i + 1] & 0xFF) != 0xD8 || (d[i + 2] & 0xFF) != 0xFF) continue;
++                int[] x = jpegExif(d, i + 2, b, stop);
++                if (x != null) r.add(new int[]{x[0], x[1], 1});
++                i = Math.max(i, stop[0] - 1);
++            }
++        }
++        return r;
++    }
++
++    /**
++     * Walks the JPEG marker segments from {@code p} (just after SOI) up to SOS/EOI within
++     * {@code [p, end)}; returns {tiffOffset, tiffLength} of the first "Exif\0\0" APP1, else null.
++     * {@code stop[0]} (optional) receives the position where the walk ended.
++     */
++    private static int[] jpegExif(byte[] d, int p, int end, int[] stop) {
++        int[] found = null;
++        while (p + 4 <= end) {
++            if ((d[p] & 0xFF) != 0xFF) break;
++            int m = d[p + 1] & 0xFF;
++            if (m == 0xFF) { // fill byte
++                p++;
++                continue;
++            }
++            if (m == 0xDA || m == 0xD9 || m == 0xD8 || m == 0x00) break;
++            if (m == 0x01 || (m >= 0xD0 && m <= 0xD7)) {
++                p += 2;
++                continue;
++            }
++            int sl = ByteUtils.u16be(d, p + 2);
++            if (sl < 2 || p + 2 + sl > end) break;
++            if (m == 0xE1 && sl >= 8 + 8 && d[p + 4] == 'E' && d[p + 5] == 'x' && d[p + 6] == 'i' && d[p + 7] == 'f'
++                    && d[p + 8] == 0 && d[p + 9] == 0) {
++                found = new int[]{p + 10, sl - 8};
++                p += 2 + sl;
++                break;
++            }
++            p += 2 + sl;
++        }
++        if (stop != null) stop[0] = p;
++        return found;
++    }
++
++    /**
++     * Scrubs, inside {@code buf} (the block parsed as {@code tf}, or a copy with the same layout
++     * of those images), the EXIF blocks of the embedded JPEGs found by {@link #embeddedExif}.
++     * Returns true when bytes changed.
++     */
++    static boolean scrubEmbedded(TiffFile tf, byte[] buf, EditSpec spec, EditReport report, String where, int depth) {
++        boolean ch = false;
++        List<int[]> blocks = embeddedExif(tf);
++        String w = where == null ? "" : where;
++        for (int i = 0; i < blocks.size(); i++) {
++            int[] b = blocks.get(i);
++            String label = b[2] == 0 ? THUMBNAIL_LABEL : PREVIEW_LABEL;
++            if (w.length() > 0) label = w + ", " + (b[2] == 0 ? "küçük resim" : "önizleme");
++            if (scrub(buf, b[0], b[1], spec, report, label, depth + 1) > 0) ch = true;
++        }
++        return ch;
++    }
++
++    /** {@link #scrubEmbedded} for a complete TIFF block {@code tiff} (parsed here); never throws. */
++    static boolean scrubEmbedded(byte[] tiff, EditSpec spec, EditReport report) {
++        try {
++            return scrubEmbedded(TiffFile.parse(tiff), tiff, spec, report, null, 0);
++        } catch (UnsupportedFormatException e) {
++            return false;
++        } catch (RuntimeException e) {
++            return false;
++        }
++    }
++
++    private void run() {
++        for (int i = 0; i < tf.warnings.size(); i++) r.warn(p + tf.warnings.get(i));
++        String oldMake = tf.string(tf.ifd0.find(TAG_MAKE));
++        BrandTraces.Identity oldIdentity = BrandTraces.oldIdentity(tf, spec);
++
++        // identity strings: rewritten inside their existing slots
++        String[] values = {spec.make, spec.model, spec.software, spec.hostComputer, spec.lensMake, spec.lensModel};
++        TiffIfd[] idIfds = {tf.ifd0, tf.exif, tf.ifd1};
++        for (TiffIfd ifd : idIfds) {
++            if (ifd == null) continue;
++            String prefix = ifd == tf.ifd1 ? "EXIF IFD1 " : "EXIF ";
++            for (int k = 0; k < ID_TAGS.length; k++) {
++                if (values[k] == null) continue;
++                List<TiffEntry> es = ifd.findAll(ID_TAGS[k]);
++                for (int i = 0; i < es.size(); i++) setString(es.get(i), ID_NAMES[k], values[k], prefix);
++            }
++        }
++
++        // camera optics: existing values overwritten in place, nothing created
++        List<Optics.Req> optics = Optics.requests(spec);
++        for (int i = 0; i < optics.size(); i++) {
++            if (tf.exif != null) setNumber(tf.exif, optics.get(i), "EXIF ");
++            setNumber(tf.ifd0, optics.get(i), "EXIF IFD0 ");
++        }
++
++        if (spec.removeMakerNote) {
++            TiffIfd[] where = {tf.exif, tf.ifd0};
++            for (TiffIfd ifd : where) {
++                if (ifd == null) continue;
++                List<TiffEntry> mns = ifd.findAll(TAG_MAKER_NOTE);
++                for (int i = 0; i < mns.size(); i++) {
++                    TiffEntry mn = mns.get(i);
++                    String vendor = BrandTraces.makerNoteVendor(tf, mn, oldMake);
++                    remove(mn);
++                    r.change(p + (vendor == null ? "MakerNote temizlendi" : "MakerNote temizlendi (" + vendor + ")"));
++                }
++            }
++            removeVendorTags();
++            removeBrandTexts(oldIdentity);
++        }
++        if (spec.clearSerials) {
++            TiffIfd[] where = {tf.exif, tf.ifd0};
++            for (TiffIfd ifd : where) {
++                if (ifd == null) continue;
++                for (int k = 0; k < SERIAL_TAGS.length; k++) {
++                    List<TiffEntry> es = ifd.findAll(SERIAL_TAGS[k]);
++                    if (es.isEmpty()) continue;
++                    for (int i = 0; i < es.size(); i++) remove(es.get(i));
++                    r.change(p + "EXIF " + SERIAL_NAMES[k] + " kaldırıldı");
++                }
++            }
++        }
++        if (!removed.isEmpty()) {
++            TiffIfd[] ifds = tf.allIfds();
++            for (TiffIfd ifd : ifds) {
++                if (ifd != null) compact(ifd);
++            }
++            zeroFreed();
++        }
++        // EXIF of embedded JPEGs (thumbnail, Xiaomi preview): never touched above, image data and
++        // unreferenced bytes are always kept
++        if (depth < MAX_DEPTH && scrubEmbedded(tf, t, spec, r, where, depth)) changed = true;
++    }
++
++    // =================================================================== identity strings
++
++    /**
++     * Writes {@code value} NUL-padded into the entry's existing slot when it fits with its NUL
++     * (inline: the 4-byte field, out of line: {@code count} bytes; the count is kept, an inline
++     * count may grow up to 4), otherwise and for "" blanks the slot.
++     */
++    private void setString(TiffEntry e, String name, String value, String prefix) {
++        value = value.replace("\0", "");
++        if (e.count <= 0 || e.byteLen <= 0) return;
++        int pos;
++        int cap;
++        if (e.inline) {
++            pos = e.entryPos + 8;
++            cap = 4;
++        } else if (tf.exclusive(e)) {
++            pos = e.valuePos;
++            cap = (int) e.byteLen;
++        } else {
++            // stored outside the block (nothing to change here) or shared with other data
++            if (e.hasOutOfLineSourceValue()) r.warn(p + prefix + name + " değiştirilemedi (veri alanı paylaşılıyor)");
++            return;
++        }
++        byte[] oldSlot = Arrays.copyOfRange(tf.d, pos, pos + cap);
++        byte[] nb = value.getBytes(ByteUtils.UTF_8);
++        boolean text = typeSize(e.type) == 1;
++        if (value.length() == 0 || !text || nb.length + 1 > cap) {
++            if (allZero(oldSlot)) return;
++            Arrays.fill(t, pos, pos + cap, (byte) 0);
++            changed = true;
++            r.change(p + prefix + name + (value.length() == 0 ? " temizlendi" : " temizlendi (yeni değer sığmadı)"));
++            return;
++        }
++        byte[] slot = new byte[cap];
++        System.arraycopy(nb, 0, slot, 0, nb.length);
++        long count = e.inline ? Math.max(e.count, nb.length + 1) : e.count;
++        if (Arrays.equals(slot, oldSlot) && count == e.count) return;
++        System.arraycopy(slot, 0, t, pos, cap);
++        if (count != e.count) tf.put32(t, e.entryPos + 4, count);
++        changed = true;
++        byte[] old = tf.rawString(e);
++        if (old != null && Arrays.equals(old, nb)) return; // only stale bytes after the NUL were cleared
++        String oldText = old == null ? "?" : TiffFile.decode(old);
++        if (oldText.length() == 0) oldText = "(boş)";
++        r.change(p + prefix + name + ": " + oldText + " → " + value);
++    }
++
++    private static boolean allZero(byte[] b) {
++        for (byte x : b) {
++            if (x != 0) return false;
++        }
++        return true;
++    }
++
++    // =================================================================== optics
++
++    /** Overwrites an existing optics value of compatible type/size in place (never creates). */
++    private void setNumber(TiffIfd ifd, Optics.Req q, String prefix) {
++        List<TiffEntry> es = ifd.findAll(q.tag);
++        boolean reported = false;
++        for (int i = 0; i < es.size(); i++) {
++            TiffEntry e = es.get(i);
++            if (Optics.holds(tf, e, q)) continue;
++            boolean rational = e.type == T_RATIONAL || e.type == T_SRATIONAL;
++            long[] tc = new long[2];
++            byte[] v;
++            switch (q.kind) {
++                case Optics.K_FOCAL:
++                case Optics.K_FNUMBER:
++                case Optics.K_APEX:
++                case Optics.K_LENS_SPEC: {
++                    long n = q.kind == Optics.K_LENS_SPEC ? 4 : 1;
++                    if (!rational || e.count != n || !tf.exclusive(e)) continue;
++                    v = Optics.encode(tf, q, e.type, tc);
++                    System.arraycopy(v, 0, t, e.valuePos, v.length);
++                    tf.put16(t, e.entryPos + 2, T_RATIONAL);
++                    break;
++                }
++                case Optics.K_SHORT:
++                case Optics.K_DIM: {
++                    if (e.count != 1 || (e.type != T_SHORT && e.type != T_LONG)) continue;
++                    // FocalLengthIn35mmFormat keeps a LONG type; PixelX/Y keep SHORT unless the value needs LONG
++                    int keep = q.kind == Optics.K_SHORT && e.type == T_LONG ? T_LONG : e.type;
++                    byte[] field = new byte[4];
++                    if (keep == T_SHORT && q.value <= 0xFFFF) {
++                        tf.put16(field, 0, (int) q.value);
++                        keep = T_SHORT;
++                    } else {
++                        tf.put32(field, 0, (long) q.value);
++                        keep = T_LONG;
++                    }
++                    tf.put16(t, e.entryPos + 2, keep);
++                    System.arraycopy(field, 0, t, e.entryPos + 8, 4);
++                    break;
++                }
++                default:
++                    continue;
++            }
++            changed = true;
++            if (!reported) {
++                reported = true;
++                r.change(p + prefix + q.name + ": " + Optics.oldText(tf, e, q) + " → " + Optics.newText(q) + Optics.unit(q));
++            }
++        }
++    }
++
++    // =================================================================== removals
++
++    private void remove(TiffEntry e) {
++        if (removed.contains(e)) return;
++        removed.add(e);
++        changed = true;
++        if (e.hasOutOfLineSourceValue()) freed.add(new int[]{e.valuePos, e.valuePos + (int) e.byteLen});
++    }
++
++    private void removeVendorTags() {
++        TiffIfd[] where = {tf.exif, tf.ifd0};
++        List<String> unnamed = new ArrayList<String>();
++        for (int k = 0; k < BrandTraces.VENDOR_TAGS.length; k++) {
++            boolean found = false;
++            for (TiffIfd ifd : where) {
++                if (ifd == null) continue;
++                List<TiffEntry> es = ifd.findAll(BrandTraces.VENDOR_TAGS[k]);
++                for (int i = 0; i < es.size(); i++) {
++                    remove(es.get(i));
++                    found = true;
++                }
++            }
++            if (!found) continue;
++            String name = BrandTraces.VENDOR_NAMES[k];
++            if (name != null) r.change(p + "EXIF " + name + " kaldırıldı");
++            else unnamed.add(BrandTraces.hex(BrandTraces.VENDOR_TAGS[k]));
++        }
++        if (unnamed.isEmpty()) return;
++        StringBuilder sb = new StringBuilder(p).append(unnamed.size() == 1 ? "EXIF Xiaomi etiketi kaldırıldı: "
++                : "EXIF Xiaomi etiketleri kaldırıldı: ");
++        for (int i = 0; i < unnamed.size(); i++) {
++            if (i > 0) sb.append(", ");
++            sb.append(unnamed.get(i));
++        }
++        r.change(sb.toString());
++    }
++
++    private void removeBrandTexts(BrandTraces.Identity oldIdentity) {
++        TiffIfd[] where = {tf.ifd0, tf.exif, tf.ifd1};
++        List<String> reported = new ArrayList<String>();
++        for (TiffIfd ifd : where) {
++            if (ifd == null) continue;
++            String prefix = ifd == tf.ifd1 ? "EXIF IFD1 " : "EXIF ";
++            for (int k = 0; k < BrandTraces.TEXT_TAGS.length; k++) {
++                int tag = BrandTraces.TEXT_TAGS[k];
++                List<TiffEntry> es = ifd.findAll(tag);
++                boolean any = false;
++                for (int i = 0; i < es.size(); i++) {
++                    TiffEntry e = es.get(i);
++                    byte[] v = tf.value(e);
++                    if (v == null || !BrandTraces.isBrandText(v, tag == TAG_USER_COMMENT, oldIdentity)) continue;
++                    remove(e);
++                    any = true;
++                }
++                if (!any) continue;
++                String msg = p + prefix + BrandTraces.TEXT_NAMES[k] + " kaldırıldı (eski marka bilgisi)";
++                if (!reported.contains(msg)) {
++                    reported.add(msg);
++                    r.change(msg);
++                }
++            }
++        }
++    }
++
++    /**
++     * Drops the removed entries of {@code ifd} in place: the remaining 12-byte entries (and the
++     * next-IFD pointer) move left over the gaps, the count is decremented and the freed bytes at
++     * the end of the structure are zero-filled.
++     */
++    private void compact(TiffIfd ifd) {
++        int n = ifd.entries.size();
++        int kept = 0;
++        for (int i = 0; i < n; i++) {
++            if (!removed.contains(ifd.entries.get(i))) kept++;
++        }
++        if (kept == n) return;
++        int w = ifd.pos + 2;
++        for (int i = 0; i < n; i++) {
++            TiffEntry e = ifd.entries.get(i);
++            if (removed.contains(e)) continue;
++            if (e.entryPos != w) System.arraycopy(t, e.entryPos, t, w, 12);
++            w += 12;
++        }
++        tf.put16(t, ifd.pos, kept);
++        int end = ifd.srcEnd();
++        if (ifd.hasNextField) {
++            System.arraycopy(tf.d, ifd.pos + 2 + 12 * ifd.srcCount, t, w, 4);
++            w += 4;
++        }
++        Arrays.fill(t, w, end, (byte) 0);
++    }
++
++    /** Zero-fills the removed values except bytes still referenced by something that stays. */
++    private void zeroFreed() {
++        List<int[]> live = new ArrayList<int[]>();
++        live.add(new int[]{0, 8});
++        TiffIfd[] ifds = tf.allIfds();
++        for (TiffIfd ifd : ifds) {
++            if (ifd == null) continue;
++            int kept = 0;
++            for (int i = 0; i < ifd.entries.size(); i++) {
++                TiffEntry e = ifd.entries.get(i);
++                if (removed.contains(e)) continue;
++                kept++;
++                if (e.hasOutOfLineSourceValue()) live.add(new int[]{e.valuePos, e.valuePos + (int) e.byteLen});
++            }
++            live.add(new int[]{ifd.pos, ifd.pos + 2 + 12 * kept + (ifd.hasNextField ? 4 : 0)});
++            live.addAll(tf.dataRanges(ifd));
++        }
++        for (int k = 0; k < freed.size(); k++) {
++            int[] f = freed.get(k);
++            int s = Math.max(0, f[0]);
++            int e = Math.min(t.length, f[1]);
++            if (s >= e) continue;
++            List<int[]> ov = new ArrayList<int[]>();
++            for (int i = 0; i < live.size(); i++) {
++                int[] l = live.get(i);
++                if (l[0] < e && s < l[1]) ov.add(l);
++            }
++            Collections.sort(ov, BY_START);
++            int cur = s;
++            for (int i = 0; i < ov.size() && cur < e; i++) {
++                int[] l = ov.get(i);
++                if (l[0] > cur) Arrays.fill(t, cur, Math.min(l[0], e), (byte) 0);
++                cur = Math.max(cur, l[1]);
++            }
++            if (cur < e) Arrays.fill(t, cur, e, (byte) 0);
++        }
++    }
++}
+diff --git a/metakamera-android/src/com/metakamera/core/xmp/XmpEditor.java b/metakamera-android/src/com/metakamera/core/xmp/XmpEditor.java
+index 5729c62..fa99939 100644
+--- a/metakamera-android/src/com/metakamera/core/xmp/XmpEditor.java
++++ b/metakamera-android/src/com/metakamera/core/xmp/XmpEditor.java
+@@ -3,6 +3,7 @@ package com.metakamera.core.xmp;
+ import com.metakamera.core.EditReport;
+ import com.metakamera.core.EditSpec;
+ import com.metakamera.core.MediaInfo;
++import com.metakamera.core.tiff.Optics;
+ 
+ import java.util.ArrayList;
+ import java.util.Collections;
+@@ -34,21 +35,124 @@ public final class XmpEditor {
+     private XmpEditor() {
+     }
+ 
+-    /** A property to change: value "" = remove. */
++    /** Numeric kinds (see {@link Target#newText}); -1 = a plain string property. */
++    private static final int STRING = -1;
++    /** exif:FocalLength: rational n/1000 or decimal (3 decimals). */
++    private static final int N_FOCAL = 0;
++    /** exif:FNumber: rational n/100 or decimal (2 decimals). */
++    private static final int N_FNUMBER = 1;
++    /** exif:ApertureValue / exif:MaxApertureValue: APEX of the f-number, rational n/1000 or decimal. */
++    private static final int N_APEX = 2;
++    /** exif:FocalLengthIn35mmFilm, exif:PixelX/YDimension: integer. */
++    private static final int N_INT = 3;
++
++    /** A property to change: value "" = remove (string properties only). */
+     private static final class Target {
+         final String uri;
+         final String local;
+         final String label;
+         final String value;
++        final int kind;
++        /** Numeric value (N_APEX: the f-number). */
++        final double num;
+ 
+         Target(String uri, String local, String label, String value) {
++            this(uri, local, label, value, STRING, 0);
++        }
++
++        Target(String uri, String local, String label, String value, int kind, double num) {
+             this.uri = uri;
+             this.local = local;
+             this.label = label;
+             this.value = value;
++            this.kind = kind;
++            this.num = num;
++        }
++
++        boolean removal() {
++            return kind == STRING && value.length() == 0;
++        }
++
++        /**
++         * The text to store for a property whose current (unescaped) text is {@code old}: the
++         * string value, or for numeric properties the number in the style of {@code old}
++         * ("6930/1000" rational or "6.93" decimal; empty/unreadable: rational, the XMP type).
++         * Returns {@code old} itself when it already holds the value at that precision.
++         */
++        String newText(String old) {
++            if (kind == STRING) return value;
++            String o = old.trim();
++            boolean rational = o.indexOf('/') >= 0;
++            double ov = numericValue(o);
++            if (!rational && Double.isNaN(ov)) rational = kind != N_INT;
++            switch (kind) {
++                case N_FOCAL:
++                    if (Optics.same(ov, num, Optics.FOCAL_DEN)) return old;
++                    return number(num, Optics.FOCAL_DEN, 3, rational);
++                case N_FNUMBER:
++                    if (Optics.same(ov, num, Optics.FNUMBER_DEN)) return old;
++                    return number(num, Optics.FNUMBER_DEN, 2, rational);
++                case N_APEX:
++                    if (!Double.isNaN(ov) && Optics.sameAperture(Optics.fNumberFromApex(ov), num)) return old;
++                    return number(Math.max(0, Optics.apex(num)), Optics.APEX_DEN, 3, rational);
++                default:
++                    if (ov == num) return old;
++                    long v = (long) num;
++                    return rational ? v + "/1" : Long.toString(v);
++            }
++        }
++
++        private static String number(double v, long den, int decimals, boolean rational) {
++            if (!rational) return Optics.fmt(v, decimals);
++            long[] nd = Optics.rational(v, den);
++            return nd == null ? "0/1" : nd[0] + "/" + nd[1];
++        }
++    }
++
++    /** Signed decimal integer (digits only, at most 18), Long.MIN_VALUE when not one. */
++    static long parseLong(String s) {
++        int i = 0;
++        boolean neg = false;
++        if (s.length() > 0 && (s.charAt(0) == '-' || s.charAt(0) == '+')) {
++            neg = s.charAt(0) == '-';
++            i = 1;
++        }
++        if (i >= s.length() || s.length() - i > 18) return Long.MIN_VALUE;
++        long v = 0;
++        for (; i < s.length(); i++) {
++            char c = s.charAt(i);
++            if (c < '0' || c > '9') return Long.MIN_VALUE;
++            v = v * 10 + (c - '0');
++        }
++        return neg ? -v : v;
++    }
++
++    /** Plain decimal number ("6.93", "-1", "24", "1e3"), NaN otherwise. */
++    static double parseDecimal(String s) {
++        if (s.length() == 0 || s.length() > 64) return Double.NaN;
++        for (int i = 0; i < s.length(); i++) {
++            char c = s.charAt(i);
++            if (!((c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E')) return Double.NaN;
++        }
++        try {
++            double v = Double.parseDouble(s);
++            return Double.isInfinite(v) ? Double.NaN : v;
++        } catch (NumberFormatException e) {
++            return Double.NaN;
+         }
+     }
+ 
++    /** Numeric value of a property text: rational "a/b" or decimal; NaN when neither (or a/0). */
++    static double numericValue(String text) {
++        if (text == null) return Double.NaN;
++        String o = text.trim();
++        int slash = o.indexOf('/');
++        if (slash < 0) return parseDecimal(o);
++        long n = parseLong(o.substring(0, slash).trim());
++        long d = parseLong(o.substring(slash + 1).trim());
++        return n == Long.MIN_VALUE || d == Long.MIN_VALUE || d == 0 ? Double.NaN : (double) n / d;
++    }
++
+     /** A splice of the packet text. */
+     private static final class Edit {
+         final int start;
+@@ -56,13 +160,16 @@ public final class XmpEditor {
+         final String replacement;
+         final Target target;
+         final String oldValue;
++        /** The (unescaped) value written; "" for a removal. */
++        final String newValue;
+ 
+-        Edit(int start, int end, String replacement, Target target, String oldValue) {
++        Edit(int start, int end, String replacement, Target target, String oldValue, String newValue) {
+             this.start = start;
+             this.end = end;
+             this.replacement = replacement;
+             this.target = target;
+             this.oldValue = oldValue;
++            this.newValue = newValue;
+         }
+     }
+ 
+@@ -76,6 +183,14 @@ public final class XmpEditor {
+      * the serial/owner identifiers exifEX:BodySerialNumber, exifEX:LensSerialNumber,
+      * exifEX:CameraOwnerName, aux:SerialNumber, aux:LensSerialNumber, aux:OwnerName and
+      * exif:ImageUniqueID are removed. Nothing is ever created. Respects {@link EditSpec#editXmp}.
++     *
++     * <p>Camera optics (only where the property exists, namespace http://ns.adobe.com/exif/1.0/):
++     * exif:FocalLength, exif:FNumber, exif:ApertureValue and exif:MaxApertureValue (APEX of
++     * {@link EditSpec#fNumber}), exif:FocalLengthIn35mmFilm, exif:PixelXDimension and
++     * exif:PixelYDimension. The existing style is kept: a rational "6930/1000" stays rational
++     * (FocalLength /1000, FNumber /100, apertures /1000), a decimal "6.93" stays decimal. A value
++     * that is already equal at that precision is not touched. exifEX:LensSpecification is not
++     * edited.
+      * A packet that is not well-formed XML is returned unchanged with a warning.
+      */
+     public static String edit(String xmp, EditSpec spec, EditReport report) {
+@@ -97,7 +212,11 @@ public final class XmpEditor {
+         return result;
+     }
+ 
+-    /** Sets hasXmp; fills make/model/lens/software only where the MediaInfo field is still null. */
++    /**
++     * Sets hasXmp; fills make/model/lens/software only where the MediaInfo field is still null and
++     * focalLengthMm/fNumber/focalLength35mm/exifImageWidth/exifImageHeight (exif:*) only where it is
++     * still 0.
++     */
+     public static void inspect(String xmp, MediaInfo info) {
+         if (info == null || xmp == null) return;
+         info.hasXmp = true;
+@@ -114,6 +233,18 @@ public final class XmpEditor {
+                 String v = firstValue(xmp, toks, NS_XMP, "CreatorTool");
+                 info.software = v != null ? v : firstValue(xmp, toks, NS_TIFF, "Software");
+             }
++            double v;
++            if (info.focalLengthMm <= 0 && (v = positive(xmp, toks, "FocalLength")) > 0) info.focalLengthMm = v;
++            if (info.fNumber <= 0 && (v = positive(xmp, toks, "FNumber")) > 0) info.fNumber = v;
++            if (info.focalLength35mm <= 0 && (v = positive(xmp, toks, "FocalLengthIn35mmFilm")) > 0) {
++                info.focalLength35mm = (int) Math.min(Integer.MAX_VALUE, Math.round(v));
++            }
++            if (info.exifImageWidth <= 0 && (v = positive(xmp, toks, "PixelXDimension")) > 0) {
++                info.exifImageWidth = (int) Math.min(Integer.MAX_VALUE, Math.round(v));
++            }
++            if (info.exifImageHeight <= 0 && (v = positive(xmp, toks, "PixelYDimension")) > 0) {
++                info.exifImageHeight = (int) Math.min(Integer.MAX_VALUE, Math.round(v));
++            }
+         } catch (XmlScanner.XmlException e) {
+             // not well-formed: nothing more to report
+         } catch (RuntimeException e) {
+@@ -121,6 +252,12 @@ public final class XmpEditor {
+         }
+     }
+ 
++    /** exif:{@code local} as a positive number, else 0. */
++    private static double positive(String xmp, List<XmlScanner.Token> toks, String local) {
++        double v = numericValue(firstValue(xmp, toks, NS_EXIF, local));
++        return Double.isNaN(v) || v <= 0 ? 0 : v;
++    }
++
+     // ================================================================== editing
+ 
+     private static List<Target> targets(EditSpec spec) {
+@@ -141,9 +278,32 @@ public final class XmpEditor {
+             add(t, NS_AUX, "OwnerName", "aux:OwnerName", "");
+             add(t, NS_EXIF, "ImageUniqueID", "exif:ImageUniqueID", "");
+         }
++        if (Optics.valid(spec.focalLengthMm, Optics.FOCAL_DEN)) {
++            addNum(t, "FocalLength", N_FOCAL, spec.focalLengthMm);
++        }
++        if (spec.focalLength35mm != null && spec.focalLength35mm > 0 && spec.focalLength35mm <= 0xFFFF) {
++            addNum(t, "FocalLengthIn35mmFilm", N_INT, spec.focalLength35mm);
++        }
++        if (Optics.valid(spec.fNumber, Optics.FNUMBER_DEN)) {
++            addNum(t, "FNumber", N_FNUMBER, spec.fNumber);
++            if (spec.fNumber >= 1) {
++                addNum(t, "ApertureValue", N_APEX, spec.fNumber);
++                addNum(t, "MaxApertureValue", N_APEX, spec.fNumber);
++            }
++        }
++        Integer w = spec.exifImageWidth;
++        Integer h = spec.exifImageHeight;
++        if (w != null && h != null && w > 0 && h > 0) {
++            addNum(t, "PixelXDimension", N_INT, w);
++            addNum(t, "PixelYDimension", N_INT, h);
++        }
+         return t;
+     }
+ 
++    private static void addNum(List<Target> list, String local, int kind, double value) {
++        list.add(new Target(NS_EXIF, local, "exif:" + local, "", kind, value));
++    }
++
+     private static void add(List<Target> list, String uri, String local, String label, String value) {
+         if (value == null) return;
+         String clean = cleanValue(value);
+@@ -177,10 +337,11 @@ public final class XmpEditor {
+                 Target tg = find(targets, a.uri, a.local);
+                 if (tg == null) continue;
+                 String old = unescape(xmp.substring(a.valueStart, a.valueEnd));
+-                if (tg.value.length() == 0) {
+-                    edits.add(new Edit(a.wsStart, a.end, "", tg, old));
+-                } else if (!old.equals(tg.value)) {
+-                    edits.add(new Edit(a.valueStart, a.valueEnd, escape(tg.value, true), tg, old));
++                if (tg.removal()) {
++                    edits.add(new Edit(a.wsStart, a.end, "", tg, old, ""));
++                } else {
++                    String nv = tg.newText(old);
++                    if (!old.equals(nv)) edits.add(new Edit(a.valueStart, a.valueEnd, escape(nv, true), tg, old, nv));
+                 }
+             }
+             Target tg = find(targets, t.uri, t.local);
+@@ -222,11 +383,11 @@ public final class XmpEditor {
+             if (!firstPerLabel.containsKey(e.target.label)) firstPerLabel.put(e.target.label, e);
+         }
+         for (Edit e : firstPerLabel.values()) {
+-            if (e.target.value.length() == 0) {
++            if (e.target.removal()) {
+                 rep.change("XMP " + e.target.label + " kaldırıldı");
+             } else {
+                 String old = e.oldValue == null || e.oldValue.length() == 0 ? "(boş)" : e.oldValue;
+-                rep.change("XMP " + e.target.label + ": " + old + " → " + e.target.value);
++                rep.change("XMP " + e.target.label + ": " + old + " → " + e.newValue);
+             }
+         }
+         return result;
+@@ -239,7 +400,7 @@ public final class XmpEditor {
+     private static boolean elementEdit(String xmp, List<XmlScanner.Token> toks, int i, Target tg, List<Edit> edits) {
+         XmlScanner.Token t = toks.get(i);
+         int elemEnd = toks.get(t.match).end;
+-        if (tg.value.length() == 0) {
++        if (tg.removal()) {
+             int start = t.start;
+             if (i > 0) {
+                 XmlScanner.Token prev = toks.get(i - 1);
+@@ -247,18 +408,19 @@ public final class XmpEditor {
+                     start = prev.start;
+                 }
+             }
+-            edits.add(new Edit(start, elemEnd, "", tg, elementValue(xmp, toks, i)));
++            edits.add(new Edit(start, elemEnd, "", tg, elementValue(xmp, toks, i), ""));
+             return true;
+         }
+         if (hasAttr(t, NS_RDF, "resource") || hasAttr(t, NS_RDF, "parseType")) return false;
+         if (t.selfClosing) {
+-            edits.add(fillEmpty(xmp, t, tg, ""));
++            edits.add(fillEmpty(xmp, t, tg, "", tg.newText("")));
+             return true;
+         }
+         if (isSimple(toks, i)) {
+             String old = textContent(xmp, toks, i + 1, t.match);
+-            if (!old.equals(tg.value)) {
+-                edits.add(new Edit(t.end, toks.get(t.match).start, escape(tg.value, false), tg, old));
++            String nv = tg.newText(old);
++            if (!old.equals(nv)) {
++                edits.add(new Edit(t.end, toks.get(t.match).start, escape(nv, false), tg, old, nv));
+             }
+             return true;
+         }
+@@ -270,23 +432,24 @@ public final class XmpEditor {
+         for (int li : items) {
+             XmlScanner.Token l = toks.get(li);
+             if (l.selfClosing) {
+-                edits.add(fillEmpty(xmp, l, tg, old));
++                edits.add(fillEmpty(xmp, l, tg, old, tg.newText("")));
+                 continue;
+             }
+             String cur = textContent(xmp, toks, li + 1, l.match);
+-            if (!cur.equals(tg.value)) {
+-                edits.add(new Edit(l.end, toks.get(l.match).start, escape(tg.value, false), tg, old));
++            String nv = tg.newText(cur);
++            if (!cur.equals(nv)) {
++                edits.add(new Edit(l.end, toks.get(l.match).start, escape(nv, false), tg, old, nv));
+             }
+         }
+         return true;
+     }
+ 
+     /** Turns {@code <p:Name attrs/>} into {@code <p:Name attrs>value</p:Name>}. */
+-    private static Edit fillEmpty(String xmp, XmlScanner.Token t, Target tg, String old) {
++    private static Edit fillEmpty(String xmp, XmlScanner.Token t, Target tg, String old, String value) {
+         int k = t.end - 2;  // position of "/>"
+         while (k > t.start && XmlScanner.isWs(xmp.charAt(k - 1))) k--;
+-        String repl = xmp.substring(t.start, k) + ">" + escape(tg.value, false) + "</" + t.qname + ">";
+-        return new Edit(t.start, t.end, repl, tg, old);
++        String repl = xmp.substring(t.start, k) + ">" + escape(value, false) + "</" + t.qname + ">";
++        return new Edit(t.start, t.end, repl, tg, old, value);
+     }
+ 
+     // ================================================================== reading values
+diff --git a/metakamera-android/test/com/metakamera/test/ExifTiffTest.java b/metakamera-android/test/com/metakamera/test/ExifTiffTest.java
+index 207c0a4..402e247 100644
+--- a/metakamera-android/test/com/metakamera/test/ExifTiffTest.java
++++ b/metakamera-android/test/com/metakamera/test/ExifTiffTest.java
+@@ -5,6 +5,7 @@ import com.metakamera.core.EditSpec;
+ import com.metakamera.core.MediaInfo;
+ import com.metakamera.core.UnsupportedFormatException;
+ import com.metakamera.core.tiff.ExifTiff;
++import com.metakamera.core.tiff.Optics;
+ 
+ import java.io.ByteArrayOutputStream;
+ import java.io.File;
+@@ -213,6 +214,8 @@ public final class ExifTiffTest {
+         boolean ifd1MakeModel;
+         /** Make and LensMake share one value slot. */
+         boolean shareMakeWithLensMake;
++        /** Type of PixelX/YDimension (64 x 48): LONG or SHORT. */
++        int dimType = LONG;
+         byte[] icc;
+         List<Ent> extraIfd0 = new ArrayList<Ent>();
+         List<Ent> extraExif = new ArrayList<Ent>();
+@@ -272,8 +275,8 @@ public final class ExifTiffTest {
+             }
+             ex.add(new Ent(0xA000, UNDEF, 4, "0100".getBytes(StandardCharsets.US_ASCII)));
+             ex.add(new Ent(0xA001, SHORT, 1, t.sh(1)));
+-            ex.add(new Ent(0xA002, LONG, 1, t.lg(64)));
+-            ex.add(new Ent(0xA003, LONG, 1, t.lg(48)));
++            ex.add(new Ent(0xA002, o.dimType, 1, o.dimType == SHORT ? t.sh(64) : t.lg(64)));
++            ex.add(new Ent(0xA003, o.dimType, 1, o.dimType == SHORT ? t.sh(48) : t.lg(48)));
+             Ent pIop = null;
+             if (o.interop) ex.add(pIop = new Ent(0xA005, LONG, 1, t.lg(0)));
+             if (o.serials) {
+@@ -2219,4 +2222,1132 @@ public final class ExifTiffTest {
+         // 9 edits per input; most mutated inputs must still be editable (not just rejected)
+         T.check(ok > n * 9 / 3, "too few successful fuzz edits: " + ok + " of " + (n * 9));
+     }
++
++    // =====================================================================================
++    // Tests: camera optics (FocalLength, FNumber, ApertureValue, LensSpecification, PixelX/Y)
++    // =====================================================================================
++
++    /** iPhone 17 Pro Max main camera: 6.765 mm f/1.78, 24 mm equivalent, 48 MP 4:3 (5712 x 4284). */
++    static EditSpec withOptics(EditSpec s) {
++        s.focalLengthMm = 6.765;
++        s.focalLength35mm = 24;
++        s.fNumber = 1.78;
++        s.lensSpecification = new double[]{2.22, 9.0, 1.78, 2.8};
++        s.exifImageWidth = 5712;
++        s.exifImageHeight = 4284;
++        return s;
++    }
++
++    /**
++     * Default fixture (FNumber 18/10, PixelX/Y 64 x 48) plus FocalLength 67/10, FocalLengthIn35mmFormat
++     * 27, MaxApertureValue 297/100 (f/2.8) and LensSpecification 4.2-12.6 mm f/1.8-3.5 (no ApertureValue).
++     */
++    static Opt opticsOpt(boolean le) {
++        Opt o = opt(le);
++        TB t = new TB(le);
++        o.extraExif.add(new Ent(0x920A, RATIONAL, 1, t.lg(67, 10)));
++        o.extraExif.add(new Ent(0xA405, SHORT, 1, t.sh(27)));
++        o.extraExif.add(new Ent(0x9205, RATIONAL, 1, t.lg(297, 100)));
++        o.extraExif.add(new Ent(0xA432, RATIONAL, 4, t.lg(42, 10, 126, 10, 18, 10, 35, 10)));
++        return o;
++    }
++
++    /** "num/den" of the {@code index}-th RATIONAL of {@code tag}. */
++    static String rat(TR tr, int ifd, int tag, int index) {
++        int e = tr.entry(ifd, tag);
++        T.check(e > 0, "entry 0x" + Integer.toHexString(tag) + " missing");
++        T.eq(RATIONAL, tr.u16(e + 2), "RATIONAL type of 0x" + Integer.toHexString(tag));
++        int off = (int) tr.u32(e + 8) + 8 * index;
++        return tr.u32(off) + "/" + tr.u32(off + 4);
++    }
++
++    static void assertSorted(TR tr, int ifd, String what) {
++        int n = tr.tags(ifd);
++        for (int i = 1; i < n; i++) {
++            T.check(tr.u16(ifd + 2 + 12 * i) > tr.u16(ifd + 2 + 12 * (i - 1)), what + ": entries not sorted at " + i);
++        }
++    }
++
++    static void near(double expected, double actual, double tol, String what) {
++        T.check(Math.abs(expected - actual) <= tol, what + ": expected ~" + expected + " but was " + actual);
++    }
++
++    static double num(Map<String, String> m, String key) {
++        String v = m.get(key);
++        T.check(v != null, key + " missing in " + m);
++        return Double.parseDouble(v.trim());
++    }
++
++    public static void testOpticsLittleEndian() throws Exception {
++        optics(true);
++    }
++
++    public static void testOpticsBigEndian() throws Exception {
++        optics(false);
++    }
++
++    private static void optics(boolean le) throws Exception {
++        String tag = le ? "le" : "be";
++        Fx fx = build(opticsOpt(le));
++        EditSpec s = withOptics(nullSpec());
++        EditReport rep = new EditReport();
++        byte[] out = edit(fx.tiff, s, rep);
++        TR tr = new TR(out);
++        int ex = tr.exif();
++        T.eq("6765/1000", rat(tr, ex, 0x920A, 0), "FocalLength 6.765 -> 6765/1000");
++        T.eq("178/100", rat(tr, ex, 0x829D, 0), "FNumber 1.78 -> 178/100");
++        T.eq("1664/1000", rat(tr, ex, 0x9202, 0), "ApertureValue = 2*log2(1.78) = 1.6638");
++        T.eq("1664/1000", rat(tr, ex, 0x9205, 0), "MaxApertureValue updated (present)");
++        T.eq("2220/1000", rat(tr, ex, 0xA432, 0), "LensSpecification min focal");
++        T.eq("9000/1000", rat(tr, ex, 0xA432, 1), "LensSpecification max focal");
++        T.eq("178/100", rat(tr, ex, 0xA432, 2), "LensSpecification F at min focal");
++        T.eq("280/100", rat(tr, ex, 0xA432, 3), "LensSpecification F at max focal");
++        int f35 = tr.entry(ex, 0xA405);
++        T.eq(SHORT, tr.u16(f35 + 2), "FocalLengthIn35mmFormat SHORT");
++        T.eq(24, tr.u16(f35 + 8), "FocalLengthIn35mmFormat");
++        int px = tr.entry(ex, 0xA002);
++        int py = tr.entry(ex, 0xA003);
++        T.eq(LONG, tr.u16(px + 2), "PixelXDimension keeps LONG");
++        T.eq(5712L, tr.u32(px + 8), "PixelXDimension");
++        T.eq(4284L, tr.u32(py + 8), "PixelYDimension");
++        assertSorted(tr, ex, "Exif IFD (ApertureValue created)");
++        // append-only: the MakerNote (kept: removeMakerNote=false) and the thumbnail did not move
++        T.check(Arrays.equals(fx.makerNote, Arrays.copyOfRange(out, fx.makerNotePos, fx.makerNotePos + fx.makerNoteLen)), "makernote");
++        T.eq((long) fx.makerNotePos, tr.field(ex, 0x927C), "makernote pointer");
++        T.eq((long) fx.thumbPos, tr.field(tr.ifd1(), 0x0201), "thumbnail not moved");
++
++        File before = jpeg("optics-" + tag + "-in.jpg", fx.tiff);
++        File after = jpeg("optics-" + tag + "-out.jpg", out);
++        Map<String, String> m = T.exif(after);
++        T.eq("6.8 mm", m.get("ExifIFD:FocalLength"), "exiftool FocalLength");
++        T.eq("24 mm", m.get("ExifIFD:FocalLengthIn35mmFormat"), "exiftool 35mm");
++        T.eq("1.8", m.get("ExifIFD:FNumber"), "exiftool FNumber");
++        T.eq("1.8", m.get("ExifIFD:ApertureValue"), "exiftool ApertureValue");
++        T.eq("1.8", m.get("ExifIFD:MaxApertureValue"), "exiftool MaxApertureValue");
++        T.eq("5712", m.get("ExifIFD:ExifImageWidth"), "exiftool width");
++        T.eq("4284", m.get("ExifIFD:ExifImageHeight"), "exiftool height");
++        T.eq("HUAWEI", m.get("IFD0:Make"), "identity untouched (null spec)");
++        Map<String, String> n = T.exif(after, "-n");
++        T.eq("6.765", n.get("ExifIFD:FocalLength"), "exiftool -n FocalLength");
++        T.eq("1.78", n.get("ExifIFD:FNumber"), "exiftool -n FNumber");
++        near(1.78, num(n, "ExifIFD:ApertureValue"), 0.005, "exiftool -n ApertureValue as f-number");
++        near(1.78, num(n, "ExifIFD:MaxApertureValue"), 0.005, "exiftool -n MaxApertureValue");
++        T.eq("2.22 9 1.78 2.8", n.get("ExifIFD:LensInfo"), "exiftool -n LensInfo");
++        assertNoNewWarnings(before, after);
++
++        List<String> expected = Arrays.asList(
++                "EXIF FocalLength: 6.7 → 6.765 mm",
++                "EXIF FocalLengthIn35mmFormat: 27 → 24",
++                "EXIF FNumber: f/1.8 → f/1.78",
++                "EXIF ApertureValue eklendi: f/1.78",
++                "EXIF MaxApertureValue: f/2.8 → f/1.78",
++                "EXIF LensSpecification: 4.2-12.6 mm f/1.8-3.5 → 2.22-9 mm f/1.78-2.8",
++                "EXIF PixelXDimension: 64 → 5712",
++                "EXIF PixelYDimension: 48 → 4284");
++        T.eq(expected, rep.changes, "report");
++        T.eq(0, rep.warnings.size(), "warnings " + rep);
++
++        MediaInfo info = new MediaInfo();
++        ExifTiff.inspect(out, info);
++        near(6.765, info.focalLengthMm, 1e-9, "inspect focal");
++        near(1.78, info.fNumber, 1e-9, "inspect fNumber");
++        T.eq(24, info.focalLength35mm, "inspect 35mm");
++        T.eq(5712, info.exifImageWidth, "inspect width");
++        T.eq(4284, info.exifImageHeight, "inspect height");
++        MediaInfo src = new MediaInfo();
++        ExifTiff.inspect(fx.tiff, src);
++        near(6.7, src.focalLengthMm, 1e-9, "inspect source focal");
++        near(1.8, src.fNumber, 1e-9, "inspect source fNumber");
++        T.eq(27, src.focalLength35mm, "inspect source 35mm");
++        T.eq(64, src.exifImageWidth, "inspect source width");
++
++        EditReport rep2 = new EditReport();
++        T.check(edit(out, withOptics(nullSpec()), rep2) == out, "idempotent: " + rep2);
++
++        // together with the identity + brand-trace edit
++        EditReport ra = new EditReport();
++        byte[] full = edit(fx.tiff, withOptics(T.appleSpec()), ra);
++        File fullF = jpeg("optics-" + tag + "-full.jpg", full);
++        Map<String, String> mf = T.exif(fullF, "-n");
++        T.eq("Apple", mf.get("IFD0:Make"), "make");
++        T.eq("6.765", mf.get("ExifIFD:FocalLength"), "focal");
++        T.eq("24", mf.get("ExifIFD:FocalLengthIn35mmFormat"), "35mm");
++        T.eq(null, mf.get("ExifIFD:SerialNumber"), "serial removed");
++        T.check(hasChange(ra, "MakerNote temizlendi (VNDRNOTE)"), "makernote " + ra);
++        T.eq(11 + 8, ra.changes.size(), "identity + optics changes " + ra);
++        assertNoNewWarnings(before, fullF);
++        T.check(edit(full, withOptics(T.appleSpec()), new EditReport()) == full, "idempotent full");
++    }
++
++    /** Equal values in another encoding (693/100, Apple-style ApertureValue) are not rewritten. */
++    public static void testOpticsEqualValuesKept() throws Exception {
++        for (boolean le : new boolean[]{true, false}) {
++            Opt o = opt(le);
++            TB t = new TB(le);
++            o.extraExif.add(new Ent(0x920A, RATIONAL, 1, t.lg(693, 100)));
++            o.extraExif.add(new Ent(0x9202, RATIONAL, 1, t.lg(27767, 23734))); // Apple: f/1.5
++            o.extraExif.add(new Ent(0xA405, LONG, 1, t.lg(24)));              // LONG instead of SHORT
++            Fx fx = build(o);
++            byte[] b = fx.tiff.clone();
++            // FNumber 18/10 -> 3/2 (f/1.5)
++            TR tr = new TR(b);
++            int fn = (int) tr.field(tr.exif(), 0x829D);
++            TB w = new TB(le);
++            w.b = b;
++            w.put32(fn, 3);
++            w.put32(fn + 4, 2);
++            EditSpec s = nullSpec();
++            s.focalLengthMm = 6.93;
++            s.fNumber = 1.5;
++            s.focalLength35mm = 24;
++            s.exifImageWidth = 64;
++            s.exifImageHeight = 48;
++            EditReport rep = new EditReport();
++            T.check(edit(b, s, rep) == b, "equal values: nothing to do " + rep);
++            T.eq(0, rep.changes.size(), "no report " + rep);
++            // a really different value is rewritten
++            s.fNumber = 1.4;
++            rep = new EditReport();
++            byte[] out = edit(b, s, rep);
++            T.eq(Arrays.asList("EXIF FNumber: f/1.5 → f/1.4", "EXIF ApertureValue: f/1.5 → f/1.4"), rep.changes, "report");
++            T.eq(b.length, out.length, "both rationals rewritten in place");
++        }
++    }
++
++    public static void testOpticsPixelDimensionTypes() throws Exception {
++        for (boolean le : new boolean[]{true, false}) {
++            Opt o = opt(le);
++            o.dimType = SHORT;
++            Fx fx = build(o);
++            EditSpec s = nullSpec();
++            s.exifImageWidth = 4000;
++            s.exifImageHeight = 3000;
++            EditReport rep = new EditReport();
++            byte[] out = edit(fx.tiff, s, rep);
++            T.eq(fx.tiff.length, out.length, "inline values: nothing appended");
++            TR tr = new TR(out);
++            int px = tr.entry(tr.exif(), 0xA002);
++            T.eq(SHORT, tr.u16(px + 2), "SHORT kept");
++            T.eq(4000, tr.u16(px + 8), "width");
++            T.eq(3000, tr.u16(tr.entry(tr.exif(), 0xA003) + 8), "height");
++            T.eq(Arrays.asList("EXIF PixelXDimension: 64 → 4000", "EXIF PixelYDimension: 48 → 3000"), rep.changes, "report");
++            // > 65535 needs LONG
++            s.exifImageWidth = 70000;
++            s.exifImageHeight = 52500;
++            out = edit(fx.tiff, s, new EditReport());
++            tr = new TR(out);
++            px = tr.entry(tr.exif(), 0xA002);
++            T.eq(LONG, tr.u16(px + 2), "LONG when > 65535");
++            T.eq(70000L, tr.u32(px + 8), "width");
++            T.eq(SHORT, tr.u16(tr.entry(tr.exif(), 0xA003) + 2), "height still fits a SHORT");
++            Map<String, String> m = T.exif(jpeg("dims-" + le + ".jpg", out));
++            T.eq("70000", m.get("ExifIFD:ExifImageWidth"), "exiftool width");
++            T.eq("52500", m.get("ExifIFD:ExifImageHeight"), "exiftool height");
++            // only one of the two given: ignored
++            EditSpec one = nullSpec();
++            one.exifImageWidth = 100;
++            T.check(edit(fx.tiff, one, new EditReport()) == fx.tiff, "width without height ignored");
++        }
++    }
++
++    public static void testOpticsCreateExifIfdWhenMissing() throws Exception {
++        for (boolean le : new boolean[]{true, false}) {
++            Opt o = opt(le);
++            o.exif = false;
++            Fx fx = build(o);
++            EditReport rep = new EditReport();
++            byte[] out = edit(fx.tiff, withOptics(nullSpec()), rep);
++            List<String> expected = Arrays.asList(
++                    "Exif IFD oluşturuldu",
++                    "EXIF FocalLength eklendi: 6.765 mm",
++                    "EXIF FocalLengthIn35mmFormat eklendi: 24",
++                    "EXIF FNumber eklendi: f/1.78",
++                    "EXIF ApertureValue eklendi: f/1.78",
++                    "EXIF PixelXDimension eklendi: 5712",
++                    "EXIF PixelYDimension eklendi: 4284");
++            T.eq(expected, rep.changes, "report");
++            TR tr = new TR(out);
++            int ex = tr.exif();
++            T.eq(-1, tr.entry(ex, 0x9205), "MaxApertureValue never created");
++            T.eq(-1, tr.entry(ex, 0xA432), "LensSpecification never created");
++            T.eq(LONG, tr.u16(tr.entry(ex, 0xA002) + 2), "created PixelXDimension is LONG");
++            assertSorted(tr, ex, "new Exif IFD");
++            File before = jpeg("optics-noexif-" + le + "-in.jpg", fx.tiff);
++            File after = jpeg("optics-noexif-" + le + ".jpg", out);
++            Map<String, String> m = T.exif(after, "-n");
++            T.eq("6.765", m.get("ExifIFD:FocalLength"), "focal");
++            T.eq("1.78", m.get("ExifIFD:FNumber"), "fnumber");
++            T.eq("0232", m.get("ExifIFD:ExifVersion"), "version");
++            T.eq("5712", m.get("ExifIFD:ExifImageWidth"), "width");
++            assertNoNewWarnings(before, after);
++            T.check(edit(out, withOptics(nullSpec()), new EditReport()) == out, "idempotent");
++            // only update-only fields requested: no Exif IFD is created
++            EditSpec s = nullSpec();
++            s.lensSpecification = new double[]{2.22, 9, 1.78, 2.8};
++            T.check(edit(fx.tiff, s, new EditReport()) == fx.tiff, "LensSpecification alone creates nothing");
++        }
++    }
++
++    /** Some cameras write FocalLengthIn35mmFormat into IFD0 (e.g. Casio QV-R51): that copy is updated too. */
++    public static void testOpticsMisplacedIfd0Copy() throws Exception {
++        for (boolean le : new boolean[]{true, false}) {
++            Opt o = opt(le);
++            TB t = new TB(le);
++            o.extraIfd0.add(new Ent(0xA405, SHORT, 1, t.sh(69)));
++            Fx fx = build(o);
++            EditSpec s = nullSpec();
++            s.focalLength35mm = 24;
++            EditReport rep = new EditReport();
++            byte[] out = edit(fx.tiff, s, rep);
++            T.eq(Arrays.asList("EXIF FocalLengthIn35mmFormat eklendi: 24", "EXIF IFD0 FocalLengthIn35mmFormat: 69 → 24"),
++                    rep.changes, "report");
++            TR tr = new TR(out);
++            T.eq(24, tr.u16(tr.entry(tr.ifd0(), 0xA405) + 8), "IFD0 copy");
++            T.eq(24, tr.u16(tr.entry(tr.exif(), 0xA405) + 8), "Exif IFD");
++            Map<String, String> m = T.exif(jpeg("misplaced-" + le + ".jpg", out));
++            T.eq("24 mm", m.get("IFD0:FocalLengthIn35mmFormat"), "exiftool IFD0");
++            T.eq("24 mm", m.get("ExifIFD:FocalLengthIn35mmFormat"), "exiftool Exif IFD");
++            MediaInfo info = new MediaInfo();
++            ExifTiff.inspect(fx.tiff, info);
++            T.eq(69, info.focalLength35mm, "inspect falls back to the IFD0 copy");
++        }
++    }
++
++    public static void testOpticsInvalidValuesIgnored() throws Exception {
++        Fx fx = build(opticsOpt(true));
++        double[] bad = {Double.NaN, -1, 0, Double.POSITIVE_INFINITY, 1e12, 0.0001};
++        for (double v : bad) {
++            EditSpec s = nullSpec();
++            s.focalLengthMm = v;
++            s.fNumber = v;
++            s.lensSpecification = new double[]{v, v, v, v};
++            EditReport rep = new EditReport();
++            T.check(edit(fx.tiff, s, rep) == fx.tiff, "invalid value " + v + " ignored: " + rep);
++        }
++        EditSpec s = nullSpec();
++        s.focalLength35mm = 0;
++        s.lensSpecification = new double[]{1, 2, 3};
++        s.exifImageWidth = -5;
++        s.exifImageHeight = 100;
++        T.check(edit(fx.tiff, s, new EditReport()) == fx.tiff, "invalid 35mm / lens spec / size ignored");
++        s.focalLength35mm = 70000;
++        T.check(edit(fx.tiff, s, new EditReport()) == fx.tiff, "35mm beyond SHORT ignored");
++        // f-number below 1: FNumber is written, but no (negative) APEX value
++        EditSpec f = nullSpec();
++        f.fNumber = 0.95;
++        EditReport rep = new EditReport();
++        byte[] out = edit(fx.tiff, f, rep);
++        T.eq(Arrays.asList("EXIF FNumber: f/1.8 → f/0.95"), rep.changes, "report");
++        TR tr = new TR(out);
++        T.eq(-1, tr.entry(tr.exif(), 0x9202), "no ApertureValue");
++        T.eq("297/100", rat(tr, tr.exif(), 0x9205, 0), "MaxApertureValue untouched");
++        // unknown entries of a LensSpecification are written as 0/0
++        EditSpec l = nullSpec();
++        l.lensSpecification = new double[]{6.765, 6.765, 1.78, Double.NaN};
++        rep = new EditReport();
++        out = edit(fx.tiff, l, rep);
++        tr = new TR(out);
++        T.eq("0/0", rat(tr, tr.exif(), 0xA432, 3), "unknown -> 0/0");
++        T.eq(Arrays.asList("EXIF LensSpecification: 4.2-12.6 mm f/1.8-3.5 → 6.765 mm f/1.78-?"), rep.changes, "report");
++        T.check(edit(out, l, new EditReport()) == out, "idempotent with unknown values");
++    }
++
++    /** Rational encoding, 32-bit limits and locale-independent formatting. */
++    public static void testOpticsEncodingAndFormatting() throws Exception {
++        T.eq("6765/1000", str(Optics.rational(6.765, 1000)), "6.765");
++        T.eq("178/100", str(Optics.rational(1.78, 100)), "1.78");
++        T.eq("6930/1000", str(Optics.rational(6.93, 1000)), "6.93");
++        T.eq("6766/1000", str(Optics.rational(6.7655, 1000)), "rounded to the denominator");
++        T.eq("500000000/100", str(Optics.rational(5e6, 1000)), "denominator reduced to fit 32 bits");
++        T.eq("4000000000/1", str(Optics.rational(4e9, 1000)), "down to /1");
++        T.eq(null, Optics.rational(5e9, 1000), "too large");
++        T.eq(null, Optics.rational(0.0004, 1000), "rounds to 0");
++        T.eq(null, Optics.rational(Double.NaN, 1000), "NaN");
++        T.eq(null, Optics.rational(-1, 1000), "negative");
++        T.eq("6.765", Optics.fmt(6.765, 3), "fmt");
++        T.eq("24", Optics.fmt(24.0, 3), "fmt integer");
++        T.eq("1.4", Optics.fmt(1.4, 2), "fmt");
++        T.eq("0.97", Optics.fmt(0.9708, 2), "fmt round");
++        T.eq("2.8", Optics.fmt(2.7995, 2), "fmt round up");
++        T.eq("-1.5", Optics.fmt(-1.5, 2), "fmt negative");
++        T.eq("?", Optics.fmt(Double.NaN, 2), "fmt NaN");
++        near(1.6638, Optics.apex(1.78), 1e-4, "apex");
++        near(1.78, Optics.fNumberFromApex(Optics.apex(1.78)), 1e-12, "apex round trip");
++        T.eq("2.22-9 mm f/1.78-2.8", Optics.lensSpecText(new double[]{2.22, 9, 1.78, 2.8}), "lens text");
++        T.eq("6.765 mm f/1.78", Optics.lensSpecText(new double[]{6.765, 6.765, 1.78, 1.78}), "lens text single");
++        // a Turkish default locale (decimal comma) must not leak into reports or values
++        java.util.Locale old = java.util.Locale.getDefault();
++        try {
++            java.util.Locale.setDefault(new java.util.Locale("tr", "TR"));
++            EditReport rep = new EditReport();
++            byte[] out = edit(build(opticsOpt(true)).tiff, withOptics(nullSpec()), rep);
++            T.check(hasChange(rep, "EXIF FocalLength: 6.7 → 6.765 mm"), "decimal point in report " + rep);
++            T.eq("6765/1000", rat(new TR(out), new TR(out).exif(), 0x920A, 0), "value");
++        } finally {
++            java.util.Locale.setDefault(old);
++        }
++    }
++
++    private static String str(long[] r) {
++        return r == null ? null : r[0] + "/" + r[1];
++    }
++
++    public static void testCreateMinimalWithOptics() throws Exception {
++        EditSpec s = withOptics(T.appleSpec());
++        byte[] t = ExifTiff.createMinimal(s, 4032, 3024);
++        File f = jpeg("minimal-optics.jpg", t);
++        Map<String, String> m = T.exif(f);
++        T.eq("5712", m.get("ExifIFD:ExifImageWidth"), "spec size overrides the parameters");
++        T.eq("4284", m.get("ExifIFD:ExifImageHeight"), "h");
++        T.eq("6.8 mm", m.get("ExifIFD:FocalLength"), "focal");
++        T.eq("24 mm", m.get("ExifIFD:FocalLengthIn35mmFormat"), "35mm");
++        T.eq("1.8", m.get("ExifIFD:FNumber"), "fnumber");
++        T.eq("1.8", m.get("ExifIFD:ApertureValue"), "aperture");
++        T.eq(null, m.get("ExifIFD:MaxApertureValue"), "MaxApertureValue is update-only");
++        T.eq(null, m.get("ExifIFD:LensInfo"), "LensSpecification is update-only");
++        T.eq("Apple", m.get("IFD0:Make"), "make");
++        Set<String> w = warnings(f);
++        T.check(w.isEmpty(), "createMinimal with optics must validate cleanly: " + w);
++        TR tr = new TR(t);
++        assertSorted(tr, tr.exif(), "createMinimal Exif IFD");
++        T.eq("6765/1000", rat(tr, tr.exif(), 0x920A, 0), "focal rational");
++        EditReport rep = new EditReport();
++        T.check(edit(t, s, rep) == t, "same spec is a no-op: " + rep);
++        MediaInfo info = new MediaInfo();
++        ExifTiff.inspect(t, info);
++        near(6.765, info.focalLengthMm, 1e-9, "inspect");
++        T.eq(5712, info.exifImageWidth, "inspect width");
++        // only a width in the spec: the parameters are used
++        EditSpec half = nullSpec();
++        half.exifImageWidth = 100;
++        Map<String, String> m2 = T.exif(jpeg("minimal-half.jpg", ExifTiff.createMinimal(half, 4032, 3024)));
++        T.eq("4032", m2.get("ExifIFD:ExifImageWidth"), "parameter width");
++        T.eq(null, m2.get("ExifIFD:FocalLength"), "no optics");
++    }
++
++    // =====================================================================================
++    // Tests: brand token rule
++    // =====================================================================================
++
++    public static void testBrandTokenRule() throws Exception {
++        for (boolean le : new boolean[]{true, false}) {
++            Opt o = opt(le);
++            o.make = "OLYMPUS IMAGING CORP.";
++            o.model = "E-P3";
++            o.software = "Version 1.0";
++            o.lensModel = null;
++            Ent desc = ascii(0x010E, "OLYMPUS DIGITAL CAMERA         "); // the camera default
++            Ent uc = userComment("ASCII", "olympus-pen ile tatil", le);    // whole word (hyphen)
++            Ent fan = xp(0x9C9C, "OLYMPUSFAN kulubu");                  // not the whole word
++            o.extraIfd0.add(desc);
++            o.extraExif.add(uc);
++            o.extraIfd0.add(fan);
++            Fx fx = build(o);
++            File before = jpeg("token-" + le + "-in.jpg", fx.tiff);
++            T.eq("OLYMPUS DIGITAL CAMERA", T.exif(before).get("IFD0:ImageDescription"), "fixture");
++            EditReport rep = new EditReport();
++            byte[] out = edit(fx.tiff, T.appleSpec(), rep);
++            zeroed(out, desc, "OLYMPUS DIGITAL CAMERA");
++            zeroed(out, uc, "olympus-pen");
++            intact(out, fan, "OLYMPUSFAN");
++            absent(out, "OLYMPUS", "brand token");
++            absent(out, "olympus", "brand token (lower case)");
++            T.check(hasChange(rep, "EXIF ImageDescription" + TRACE), "rep " + rep);
++            T.check(hasChange(rep, "EXIF UserComment" + TRACE), "rep " + rep);
++            T.check(!hasChangeContaining(rep, "XPComment"), "rep " + rep);
++            File after = jpeg("token-" + le + "-out.jpg", out);
++            Map<String, String> m = T.exif(after);
++            T.eq(null, m.get("IFD0:ImageDescription"), "description removed");
++            T.eq("OLYMPUSFAN kulubu", m.get("IFD0:XPComment"), "not a whole word: kept");
++            assertNoNewWarnings(before, after);
++            T.check(edit(out, T.appleSpec(), new EditReport()) == out, "idempotent");
++
++            // the new make has the same brand token: not a trace
++            EditSpec same = T.appleSpec();
++            same.make = "OLYMPUS CORPORATION";
++            same.model = "OM-1";
++            EditReport rs = new EditReport();
++            byte[] o2 = edit(fx.tiff, same, rs);
++            intact(o2, desc, "same token kept");
++            intact(o2, uc, "same token kept");
++            T.check(!hasChangeContaining(rs, "eski marka"), "rep " + rs);
++
++            // without "remove brand traces" nothing is removed
++            EditSpec keep = T.appleSpec();
++            keep.removeMakerNote = false;
++            byte[] o3 = edit(fx.tiff, keep, new EditReport());
++            intact(o3, desc, "option off");
++
++            // "CASIO COMPUTER CO.,LTD." -> token CASIO
++            o = opt(le);
++            o.make = "CASIO COMPUTER CO.,LTD.";
++            o.model = "EX-100";
++            Ent c1 = ascii(0x010E, "Casio ile cekildi");
++            Ent c2 = userComment("ASCII", "casiopeia konseri", le);
++            o.extraIfd0.add(c1);
++            o.extraExif.add(c2);
++            fx = build(o);
++            rep = new EditReport();
++            out = edit(fx.tiff, T.appleSpec(), rep);
++            zeroed(out, c1, "Casio");
++            intact(out, c2, "casiopeia is another word");
++
++            // first word shorter than 4 letters: no token
++            o = opt(le);
++            o.make = "HMD Global";
++            o.model = "Nokia X30";
++            Ent h = ascii(0x010E, "HMD toplantisi");
++            o.extraIfd0.add(h);
++            fx = build(o);
++            out = edit(fx.tiff, T.appleSpec(), new EditReport());
++            intact(out, h, "HMD is too short to be a token");
++        }
++    }
++
++    // =====================================================================================
++    // Tests: scrubInPlace (secondary EXIF blocks that must keep their size)
++    // =====================================================================================
++
++    static final String WHERE = "MPF görüntü 2";
++
++    /** {@code tiff} embedded at offset 37 of a buffer with recognizable bytes before and after. */
++    static byte[] embed(byte[] tiff) {
++        byte[] buf = new byte[37 + tiff.length + 23];
++        for (int i = 0; i < buf.length; i++) buf[i] = (byte) (0xA0 + i % 7);
++        System.arraycopy(tiff, 0, buf, 37, tiff.length);
++        return buf;
++    }
++
++    static byte[] embedded(byte[] buf, int len) {
++        return Arrays.copyOfRange(buf, 37, 37 + len);
++    }
++
++    static void outsideUnchanged(byte[] before, byte[] after, int len, String what) {
++        T.eq(before.length, after.length, what + ": buffer length");
++        for (int i = 0; i < 37; i++) T.check(before[i] == after[i], what + ": byte before the block changed at " + i);
++        for (int i = 37 + len; i < before.length; i++) T.check(before[i] == after[i], what + ": byte after the block changed at " + i);
++    }
++
++    static boolean allPrefixed(EditReport r, String prefix) {
++        for (String c : r.changes) if (!c.startsWith(prefix)) return false;
++        for (String w : r.warnings) if (!w.startsWith(prefix)) return false;
++        return true;
++    }
++
++    public static void testScrubInPlaceLittleEndian() throws Exception {
++        scrub(true);
++    }
++
++    public static void testScrubInPlaceBigEndian() throws Exception {
++        scrub(false);
++    }
++
++    private static void scrub(boolean le) throws Exception {
++        String tag = le ? "le" : "be";
++        // HUAWEI optics fixture + MakerNote, serials, brand texts in IFD0/Exif/IFD1, IFD1 Make/Model
++        Opt o2 = opticsOpt(le);
++        o2.ifd1MakeModel = true;
++        List<Ent> texts = new ArrayList<Ent>();
++        Ent desc = ascii(0x010E, "Shot on aln-al00 night mode");
++        Ent xpComment = xp(0x9C9C, "HUAWEI XMAGE");
++        Ent xpSubject = xp(0x9C9F, "Tatil 2025");
++        Ent uc = userComment("UNICODE", "Çekim: HUAWEI P60 Pro", le);
++        Ent desc1 = ascii(0x010E, "ALN-AL00 thumbnail");
++        o2.extraIfd0.add(desc);
++        o2.extraIfd0.add(xpComment);
++        o2.extraIfd0.add(xpSubject);
++        o2.extraExif.add(uc);
++        o2.extraIfd1.add(desc1);
++        texts.add(desc);
++        texts.add(xpComment);
++        texts.add(uc);
++        texts.add(desc1);
++        Fx fx = build(o2);
++        byte[] tiff = fx.tiff;
++        TR in = new TR(tiff);
++        int ifd0Count = in.tags(in.ifd0());
++        int exifCount = in.tags(in.exif());
++        int ifd1Count = in.tags(in.ifd1());
++
++        EditSpec spec = withOptics(T.appleSpec());
++        byte[] buf = embed(tiff);
++        byte[] orig = buf.clone();
++        EditReport rep = new EditReport();
++        T.check(ExifTiff.scrubInPlace(buf, 37, tiff.length, spec, rep, WHERE), "parsed");
++        outsideUnchanged(orig, buf, tiff.length, "scrub");
++        byte[] out = embedded(buf, tiff.length);
++        TR tr = new TR(out);
++
++        // nothing moved: IFD positions and pointers are the same
++        T.eq(in.ifd0(), tr.ifd0(), "IFD0 in place");
++        T.eq(in.exif(), tr.exif(), "Exif IFD in place");
++        T.eq(in.ifd1(), tr.ifd1(), "IFD1 pointer kept (moved with the IFD0 entries)");
++        T.eq(in.field(in.ifd0(), 0x8825), tr.field(tr.ifd0(), 0x8825), "GPS pointer");
++        T.eq((long) fx.thumbPos, tr.field(tr.ifd1(), 0x0201), "thumbnail offset");
++        // entries removed in place: counts decremented, tails zero-filled, order kept
++        T.eq(ifd0Count - 2, tr.tags(tr.ifd0()), "IFD0: ImageDescription + XPComment removed");
++        T.eq(exifCount - 6, tr.tags(tr.exif()), "Exif IFD: MakerNote + 4 serials + UserComment removed");
++        T.eq(ifd1Count - 1, tr.tags(tr.ifd1()), "IFD1: ImageDescription removed");
++        int[][] ifds = {{in.ifd0(), ifd0Count, 2}, {in.exif(), exifCount, 6}, {in.ifd1(), ifd1Count, 1}};
++        for (int[] f : ifds) {
++            int newEnd = f[0] + 2 + 12 * (f[1] - f[2]) + 4;
++            int oldEnd = f[0] + 2 + 12 * f[1] + 4;
++            for (int i = newEnd; i < oldEnd; i++) T.check(out[i] == 0, "freed IFD tail zeroed at " + i);
++            assertSorted(tr, f[0], "IFD at " + f[0]);
++        }
++        for (int i = 0; i < fx.makerNoteLen; i++) T.check(out[fx.makerNotePos + i] == 0, "makernote zero-filled at " + i);
++        for (Ent e : texts) zeroed(out, e, "brand text 0x" + Integer.toHexString(e.tag));
++        intact(out, xpSubject, "unrelated XPSubject");
++        absent(out, "HUAWEI", "old make");
++        absent(out, "ALN-AL00", "old model");
++        absent(out, "aln-al00", "old model (lower case)");
++        absentUcs2(out, "HUAWEI", "old make (UTF-16)");
++        absent(out, "SECRETVENDOR", "makernote");
++        absent(out, "VNDRNOTE", "makernote");
++        absent(out, "SN-HW-123456", "serial");
++        absent(out, "LSN-999", "lens serial");
++        absent(out, "Ali Veli", "owner");
++        absent(out, "0123456789ABCDEF0123456789ABCDEF", "unique id");
++        // strings: written when they fit, blanked otherwise; never created
++        T.eq("Apple", tr.str(tr.ifd0(), 0x010F), "Make fits the 7-byte slot");
++        T.eq(7L, tr.u32(tr.entry(tr.ifd0(), 0x010F) + 4), "count kept");
++        T.eq("", tr.str(tr.ifd0(), 0x0110), "Model does not fit: blanked");
++        T.eq("26.0.1", tr.str(tr.ifd0(), 0x0131), "Software fits");
++        T.eq(-1, tr.entry(tr.ifd0(), 0x013C), "HostComputer not created");
++        T.eq(-1, tr.entry(tr.exif(), 0xA433), "LensMake not created");
++        T.eq("", tr.str(tr.exif(), 0xA434), "LensModel does not fit: blanked");
++        T.eq("Apple", tr.str(tr.ifd1(), 0x010F), "IFD1 Make");
++        T.eq("", tr.str(tr.ifd1(), 0x0110), "IFD1 Model blanked");
++        // optics: overwritten in place, ApertureValue (absent) not created
++        T.eq("6765/1000", rat(tr, tr.exif(), 0x920A, 0), "FocalLength");
++        T.eq("178/100", rat(tr, tr.exif(), 0x829D, 0), "FNumber");
++        T.eq("1664/1000", rat(tr, tr.exif(), 0x9205, 0), "MaxApertureValue");
++        T.eq("9000/1000", rat(tr, tr.exif(), 0xA432, 1), "LensSpecification");
++        T.eq(-1, tr.entry(tr.exif(), 0x9202), "ApertureValue not created");
++        T.eq(24, tr.u16(tr.entry(tr.exif(), 0xA405) + 8), "35mm");
++        T.eq(5712L, tr.u32(tr.entry(tr.exif(), 0xA002) + 8), "PixelXDimension");
++
++        File before = jpeg("scrub-" + tag + "-in.jpg", tiff);
++        File after = jpeg("scrub-" + tag + "-out.jpg", out);
++        Map<String, String> m = T.exif(after);
++        T.eq("Apple", m.get("IFD0:Make"), "exiftool make");
++        T.eq("", m.get("IFD0:Model"), "exiftool model blank");
++        T.eq("26.0.1", m.get("IFD0:Software"), "exiftool software");
++        T.eq("Apple", m.get("IFD1:Make"), "exiftool IFD1 make");
++        T.eq(null, m.get("IFD0:ImageDescription"), "description gone");
++        T.eq("Tatil 2025", m.get("IFD0:XPSubject"), "unrelated kept");
++        T.eq(null, m.get("ExifIFD:UserComment"), "comment gone");
++        T.eq(null, m.get("ExifIFD:SerialNumber"), "serial gone");
++        for (String k : m.keySet()) T.check(!k.contains("MakerNote") && !k.startsWith("MakerUnknown"), "makernote gone: " + k);
++        T.eq("6.8 mm", m.get("ExifIFD:FocalLength"), "focal");
++        T.eq("1.8", m.get("ExifIFD:FNumber"), "fnumber");
++        T.eq("2025:06:01 12:00:00", m.get("ExifIFD:DateTimeOriginal"), "dto kept");
++        T.eq("R98 - DCF basic file (sRGB)", m.get("InteropIFD:InteropIndex"), "interop kept");
++        T.eq("41 deg 0' 0.00\"", m.get("GPS:GPSLatitude"), "gps kept");
++        T.check(Arrays.equals(fx.thumb, exiftoolThumbnail(after)), "thumbnail bytes preserved");
++        assertNoNewWarnings(before, after);
++
++        T.check(allPrefixed(rep, WHERE + ": "), "every line prefixed: " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF Make: HUAWEI → Apple"), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF Model temizlendi (yeni değer sığmadı)"), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF Software: ALN-AL00 4.0.0.120(C00E120R1P1) → 26.0.1"), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF LensModel temizlendi (yeni değer sığmadı)"), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF IFD1 Make: HUAWEI → Apple"), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": MakerNote temizlendi (VNDRNOTE)"), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF ImageDescription" + TRACE), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF IFD1 ImageDescription" + TRACE), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF UserComment" + TRACE), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF BodySerialNumber kaldırıldı"), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF FocalLength: 6.7 → 6.765 mm"), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF FNumber: f/1.8 → f/1.78"), "rep " + rep);
++        T.check(hasChange(rep, WHERE + ": EXIF PixelXDimension: 64 → 5712"), "rep " + rep);
++        T.check(!hasChangeContaining(rep, "ApertureValue eklendi") && !hasChangeContaining(rep, "HostComputer"), "nothing created " + rep);
++        T.eq(0, rep.warnings.size(), "warnings " + rep);
++
++        // idempotent: a second scrub changes nothing and reports nothing
++        byte[] again = buf.clone();
++        EditReport rep2 = new EditReport();
++        T.check(ExifTiff.scrubInPlace(again, 37, tiff.length, spec, rep2, WHERE), "parsed again");
++        T.check(Arrays.equals(buf, again), "second scrub changes nothing");
++        T.eq(0, rep2.changes.size(), "second scrub report " + rep2);
++        MediaInfo info = new MediaInfo();
++        ExifTiff.inspect(out, info);
++        T.eq("Apple", info.make, "inspect make");
++        T.check(!info.hasMakerNote, "inspect makernote");
++        near(6.765, info.focalLengthMm, 1e-9, "inspect focal");
++
++        // the same block at offset 0 of an exact-size array, without a label
++        byte[] exact = tiff.clone();
++        EditReport r0 = new EditReport();
++        T.check(ExifTiff.scrubInPlace(exact, 0, exact.length, spec, r0, null), "offset 0");
++        T.check(Arrays.equals(out, exact), "same result at offset 0");
++        T.check(hasChange(r0, "EXIF Make: HUAWEI → Apple"), "no prefix " + r0);
++
++        // the options off: only identity strings and optics change, every removable tag stays
++        EditSpec keep = withOptics(T.appleSpec());
++        keep.removeMakerNote = false;
++        keep.clearSerials = false;
++        byte[] kb = embed(tiff);
++        EditReport rk = new EditReport();
++        T.check(ExifTiff.scrubInPlace(kb, 37, tiff.length, keep, rk, WHERE), "parsed");
++        byte[] ko = embedded(kb, tiff.length);
++        TR tk = new TR(ko);
++        T.eq(ifd0Count, tk.tags(tk.ifd0()), "IFD0 count kept");
++        T.eq(exifCount, tk.tags(tk.exif()), "Exif count kept");
++        T.check(Arrays.equals(fx.makerNote, Arrays.copyOfRange(ko, fx.makerNotePos, fx.makerNotePos + fx.makerNoteLen)), "makernote kept");
++        for (Ent e : texts) intact(ko, e, "text kept 0x" + Integer.toHexString(e.tag));
++        T.eq("SN-HW-123456", tk.str(tk.exif(), 0xA431), "serial kept");
++        T.check(!hasChangeContaining(rk, "kaldırıldı") && !hasChangeContaining(rk, "MakerNote"), "nothing removed " + rk);
++    }
++
++    /**
++     * Xiaomi writes the complete original EXIF (Make, Model, XiaomiModel) into the JPEG thumbnail
++     * of IFD1: that nested block is edited in place, both by edit() and by scrubInPlace().
++     */
++    public static void testThumbnailOwnExifScrubbed() throws Exception {
++        for (boolean le : new boolean[]{true, false}) {
++            // the thumbnail's own EXIF (as Xiaomi writes it, same byte order)
++            Opt n = opt(le);
++            n.make = "Xiaomi";
++            n.model = "M2012K11AG";
++            n.software = null;
++            n.lensModel = null;
++            n.makerNote = false;
++            n.serials = false;
++            n.gps = false;
++            n.interop = false;
++            n.thumbnail = false;
++            n.extraIfd0.add(ascii(0x9A00, "POCO F3"));
++            byte[] nested = build(n).tiff;
++            byte[] thumb = withExif(thumbJpeg(), nested);
++            Opt o = opt(le);
++            o.make = "Xiaomi";
++            o.model = "M2012K11AG";
++            o.thumbData = thumb;
++            Fx fx = build(o);
++            File before = jpeg("thumbexif-" + le + "-in.jpg", fx.tiff);
++            File thIn = T.file("thumbexif-" + le + "-thumb-in.jpg");
++            T.write(thIn, exiftoolThumbnail(before));
++            T.eq("POCO F3", T.exif(thIn).get("IFD0:XiaomiModel"), "fixture: exiftool reads the thumbnail's EXIF");
++
++            EditReport rep = new EditReport();
++            byte[] out = edit(fx.tiff, T.appleSpec(), rep);
++            absent(out, "Xiaomi", "make in the thumbnail EXIF");
++            absent(out, "POCO F3", "XiaomiModel in the thumbnail EXIF");
++            absent(out, "M2012K11AG", "model in the thumbnail EXIF");
++            T.check(hasChange(rep, "Küçük resim: EXIF Make: Xiaomi → Apple"), "rep " + rep);
++            T.check(hasChange(rep, "Küçük resim: EXIF XiaomiModel kaldırıldı"), "rep " + rep);
++            T.check(hasChange(rep, "Küçük resim: EXIF Model temizlendi (yeni değer sığmadı)"), "rep " + rep);
++            TR tr = new TR(out);
++            T.eq((long) fx.thumbPos, tr.field(tr.ifd1(), 0x0201), "thumbnail not moved");
++            T.eq((long) thumb.length, tr.field(tr.ifd1(), 0x0202), "thumbnail length unchanged");
++            File after = jpeg("thumbexif-" + le + "-out.jpg", out);
++            File thOut = T.file("thumbexif-" + le + "-thumb-out.jpg");
++            T.write(thOut, exiftoolThumbnail(after));
++            T.eq(thumb.length, (int) thOut.length(), "thumbnail size");
++            Map<String, String> mt = T.exif(thOut);
++            T.eq("Apple", mt.get("IFD0:Make"), "thumbnail EXIF make");
++            T.eq(null, mt.get("IFD0:XiaomiModel"), "thumbnail XiaomiModel removed");
++            T.eq("0", T.exec("compare", "-metric", "AE", thIn.getPath(), thOut.getPath(), "null:").out.trim(), "thumbnail pixels identical");
++            assertNoNewWarnings(before, after);
++            T.check(edit(out, T.appleSpec(), new EditReport()) == out, "idempotent");
++
++            // nothing to change in the main block, only in the thumbnail: a copy is returned
++            EditSpec mk = nullSpec();
++            mk.make = "Xiaomi";
++            mk.removeMakerNote = true;
++            Opt clean = opt(le);
++            clean.make = "Xiaomi";
++            clean.model = "M2012K11AG";
++            clean.makerNote = false;
++            clean.thumbData = thumb;
++            Fx cf = build(clean);
++            byte[] copy = cf.tiff.clone();
++            EditReport rc = new EditReport();
++            byte[] co = edit(cf.tiff, mk, rc);
++            T.check(co != cf.tiff, "the thumbnail's XiaomiModel still has to go");
++            T.check(Arrays.equals(copy, cf.tiff), "input not modified");
++            T.eq(Arrays.asList("Küçük resim: EXIF XiaomiModel kaldırıldı"), rc.changes, "report");
++            T.eq(cf.tiff.length, co.length, "same size");
++
++            // scrubInPlace follows the thumbnail too
++            byte[] b = embed(fx.tiff);
++            EditReport rs = new EditReport();
++            T.check(ExifTiff.scrubInPlace(b, 37, fx.tiff.length, T.appleSpec(), rs, WHERE), "parsed");
++            byte[] sc = embedded(b, fx.tiff.length);
++            absent(sc, "Xiaomi", "scrub: make");
++            absent(sc, "POCO F3", "scrub: thumbnail XiaomiModel");
++            T.check(hasChange(rs, WHERE + ", küçük resim: EXIF Make: Xiaomi → Apple"), "rep " + rs);
++        }
++    }
++
++    /** Inline (<= 4 byte) slots, "" values and a slot shared with another tag. */
++    public static void testScrubInPlaceSlots() throws Exception {
++        for (boolean le : new boolean[]{true, false}) {
++            Opt o = opt(le);
++            o.make = "LG";        // "LG\0": inline, count 3
++            o.model = "LGE";      // "LGE\0": inline, count 4
++            Fx fx = build(o);
++            EditSpec s = nullSpec();
++            s.make = "HTC";       // 4 bytes with NUL: fits inline, the count grows to 4
++            s.model = "Sony";     // 5 bytes with NUL: does not fit -> blank
++            s.software = "";      // "" -> blank
++            byte[] b = embed(fx.tiff);
++            EditReport rep = new EditReport();
++            T.check(ExifTiff.scrubInPlace(b, 37, fx.tiff.length, s, rep, "Önizleme"), "parsed");
++            byte[] out = embedded(b, fx.tiff.length);
++            TR tr = new TR(out);
++            int mk = tr.entry(tr.ifd0(), 0x010F);
++            T.eq("HTC", tr.str(tr.ifd0(), 0x010F), "make");
++            T.eq(4L, tr.u32(mk + 4), "inline count grew to 4");
++            T.eq("", tr.str(tr.ifd0(), 0x0110), "model blanked");
++            T.eq(4L, tr.u32(tr.entry(tr.ifd0(), 0x0110) + 4), "model count kept");
++            T.eq("", tr.str(tr.ifd0(), 0x0131), "software blanked");
++            absent(out, "ALN-AL00 4.0.0", "old software bytes");
++            T.eq(Arrays.asList("Önizleme: EXIF Make: LG → HTC", "Önizleme: EXIF Model temizlendi (yeni değer sığmadı)",
++                    "Önizleme: EXIF Software temizlendi"), rep.changes, "report");
++            Map<String, String> m = T.exif(jpeg("scrub-slots-" + le + ".jpg", out));
++            T.eq("HTC", m.get("IFD0:Make"), "exiftool make");
++            assertNoNewWarnings(jpeg("scrub-slots-" + le + "-in.jpg", fx.tiff), jpeg("scrub-slots-" + le + ".jpg", out));
++            EditReport r2 = new EditReport();
++            byte[] b2 = b.clone();
++            T.check(ExifTiff.scrubInPlace(b2, 37, fx.tiff.length, s, r2, "Önizleme"), "again");
++            T.check(Arrays.equals(b, b2) && r2.changes.isEmpty(), "idempotent " + r2);
++
++            // Make and LensMake share one value slot: writing one would change the other
++            o = opt(le);
++            o.lensMake = "HUAWEI";
++            o.shareMakeWithLensMake = true;
++            fx = build(o);
++            s = nullSpec();
++            s.make = "Apple";
++            b = embed(fx.tiff);
++            rep = new EditReport();
++            T.check(ExifTiff.scrubInPlace(b, 37, fx.tiff.length, s, rep, WHERE), "parsed");
++            tr = new TR(embedded(b, fx.tiff.length));
++            T.eq("HUAWEI", tr.str(tr.exif(), 0xA433), "lens make intact");
++            T.eq("HUAWEI", tr.str(tr.ifd0(), 0x010F), "shared slot not written");
++            T.check(hasWarningContaining(rep, WHERE + ": EXIF Make değiştirilemedi"), "warned " + rep);
++
++            // SHORT pixel size that needs a LONG: the 4-byte field is re-typed in place
++            o = opt(le);
++            o.dimType = SHORT;
++            fx = build(o);
++            s = nullSpec();
++            s.exifImageWidth = 70000;
++            s.exifImageHeight = 3000;
++            s.focalLengthMm = 6.765;   // absent: not created
++            b = embed(fx.tiff);
++            rep = new EditReport();
++            T.check(ExifTiff.scrubInPlace(b, 37, fx.tiff.length, s, rep, WHERE), "parsed");
++            tr = new TR(embedded(b, fx.tiff.length));
++            int px = tr.entry(tr.exif(), 0xA002);
++            T.eq(LONG, tr.u16(px + 2), "re-typed to LONG");
++            T.eq(70000L, tr.u32(px + 8), "width");
++            T.eq(SHORT, tr.u16(tr.entry(tr.exif(), 0xA003) + 2), "height stays SHORT");
++            T.eq(-1, tr.entry(tr.exif(), 0x920A), "FocalLength not created");
++            T.eq(Arrays.asList(WHERE + ": EXIF PixelXDimension: 64 → 70000", WHERE + ": EXIF PixelYDimension: 48 → 3000"),
++                    rep.changes, "report");
++            T.eq("70000", T.exif(jpeg("scrub-dims-" + le + ".jpg", embedded(b, fx.tiff.length))).get("ExifIFD:ExifImageWidth"), "exiftool");
++        }
++    }
++
++    /** Xiaomi vendor tags (IFD0 and Exif IFD) removed in place. */
++    public static void testScrubInPlaceXiaomiVendorTags() throws Exception {
++        for (boolean le : new boolean[]{true, false}) {
++            List<Ent> ool = new ArrayList<Ent>();
++            Fx fx = build(xiaomiOpt(le, ool));
++            byte[] b = embed(fx.tiff);
++            EditReport rep = new EditReport();
++            T.check(ExifTiff.scrubInPlace(b, 37, fx.tiff.length, T.appleSpec(), rep, WHERE), "parsed");
++            byte[] out = embedded(b, fx.tiff.length);
++            TR tr = new TR(out);
++            for (int t : XIAOMI_EXIF_TAGS) T.eq(-1, tr.entry(tr.exif(), t), "Exif IFD entry gone: 0x" + Integer.toHexString(t));
++            for (int t : XIAOMI_IFD0_TAGS) T.eq(-1, tr.entry(tr.ifd0(), t), "IFD0 entry gone: 0x" + Integer.toHexString(t));
++            for (Ent e : ool) zeroed(out, e, "vendor tag 0x" + Integer.toHexString(e.tag));
++            absent(out, "Xiaomi", "make / XiaomiModel");
++            absent(out, "AIEnable", "XiaomiSettings");
++            present(out, "Dogum gunu partisi", "unrelated comment");
++            T.check(hasChange(rep, WHERE + ": EXIF XiaomiModel kaldırıldı"), "rep " + rep);
++            T.check(hasChange(rep, WHERE + ": EXIF Xiaomi etiketleri kaldırıldı: 0x0220, 0x0224, 0x0225, 0x8889, 0x8891, 0x889A, 0x9AAA, 0xA661"),
++                    "rep " + rep);
++            File before = jpeg("scrub-xiaomi-" + le + "-in.jpg", fx.tiff);
++            File after = jpeg("scrub-xiaomi-" + le + ".jpg", out);
++            Map<String, String> m = T.exif(after);
++            for (String k : m.keySet()) T.check(!k.startsWith("JSON:") && !k.contains("Xiaomi"), "survived: " + k);
++            T.eq("Apple", m.get("IFD0:Make"), "make fits the 7-byte slot");
++            assertNoNewWarnings(before, after);
++        }
++    }
++
++    public static void testScrubInPlaceRejectsBadInput() throws Exception {
++        Fx fx = build(opt(true));
++        byte[] buf = embed(fx.tiff);
++        byte[] orig = buf.clone();
++        EditSpec s = T.appleSpec();
++        T.check(!ExifTiff.scrubInPlace(null, 0, 10, s, null, WHERE), "null buffer");
++        T.check(!ExifTiff.scrubInPlace(buf, -1, 10, s, null, WHERE), "negative offset");
++        T.check(!ExifTiff.scrubInPlace(buf, 37, buf.length, s, null, WHERE), "beyond the end");
++        T.check(!ExifTiff.scrubInPlace(buf, 37, -5, s, null, WHERE), "negative length");
++        T.check(!ExifTiff.scrubInPlace(buf, Integer.MAX_VALUE, Integer.MAX_VALUE, s, null, WHERE), "overflowing range");
++        T.check(!ExifTiff.scrubInPlace(buf, 0, buf.length, s, null, WHERE), "not a TIFF header at the offset");
++        T.check(!ExifTiff.scrubInPlace(buf, 37, 7, s, null, WHERE), "too short");
++        T.check(Arrays.equals(orig, buf), "untouched");
++        EditReport r = new EditReport();
++        T.check(ExifTiff.scrubInPlace(buf, 37, fx.tiff.length, null, r, WHERE), "null spec: parsed, nothing to do");
++        T.check(Arrays.equals(orig, buf) && r.changes.isEmpty(), "null spec changes nothing");
++        // truncated range: the IFD0 is cut -> parse fails, nothing written
++        TR tr = new TR(fx.tiff);
++        EditReport rt = new EditReport();
++        rt.change("önceki");
++        T.check(!ExifTiff.scrubInPlace(buf, 37, tr.ifd0() + 10, s, rt, WHERE), "truncated IFD0");
++        T.check(Arrays.equals(orig, buf), "untouched after a failure");
++        T.eq(1, rt.changes.size(), "report untouched after a failure");
++    }
++
++    public static void testScrubInPlaceFuzzNeverThrows() throws Exception {
++        List<byte[]> seeds = new ArrayList<byte[]>();
++        for (boolean le : new boolean[]{true, false}) {
++            seeds.add(build(opticsOpt(le)).tiff);
++            Opt o = opt(le);
++            o.ifd1MakeModel = true;
++            o.lensMake = "HUAWEI";
++            o.shareMakeWithLensMake = true;
++            seeds.add(build(o).tiff);
++        }
++        seeds.add(build(xiaomiOpt(true, null)).tiff);
++        seeds.add(brandTextFixture(false).fx.tiff);
++        seeds.add(ExifTiff.createMinimal(withOptics(T.appleSpec()), 100, 100));
++        EditSpec removal = nullSpec();
++        removal.make = "";
++        removal.model = "";
++        removal.lensModel = "";
++        removal.removeMakerNote = true;
++        removal.clearSerials = true;
++        EditSpec[] specs = {withOptics(T.appleSpec()), removal};
++        Random rnd = new Random(20261102L);
++        long[] interesting = {0, 1, 2, 4, 7, 8, 0xFFFF, 0x7FFFFFFFL, 0x80000000L, 0xFFFFFFFFL, 0xFFFFFFF0L};
++        int n = 0;
++        int ok = 0;
++        for (byte[] seed : seeds) {
++            TR tr = new TR(seed);
++            List<Integer> entryPos = new ArrayList<Integer>();
++            int[] ifds = {tr.ifd0(), tr.exif(), tr.ifd1()};
++            for (int ifd : ifds) {
++                if (ifd <= 0 || ifd >= seed.length) continue;
++                for (int k = 0; k < tr.tags(ifd); k++) entryPos.add(ifd + 2 + 12 * k);
++            }
++            TB w = new TB(seed[0] == 'I');
++            for (int iter = 0; iter < 500; iter++) {
++                byte[] b = seed.clone();
++                int kind = rnd.nextInt(5);
++                if (kind == 0) {
++                    int flips = 1 + rnd.nextInt(8);
++                    for (int f = 0; f < flips; f++) b[rnd.nextInt(b.length)] = (byte) rnd.nextInt(256);
++                } else if (kind == 1) {
++                    b = Arrays.copyOf(b, rnd.nextInt(b.length + 1));
++                } else if (!entryPos.isEmpty()) {
++                    int e = entryPos.get(rnd.nextInt(entryPos.size()));
++                    long v = rnd.nextBoolean() ? interesting[rnd.nextInt(interesting.length)] : rnd.nextInt(seed.length + 16);
++                    w.b = b;
++                    if (kind == 2) w.put16(e + 2, rnd.nextInt(16));
++                    else if (kind == 3) w.put32(e + 4, v);
++                    else w.put32(e + 8, v);
++                }
++                for (EditSpec s : specs) {
++                    byte[] buf = embed(b);
++                    byte[] orig = buf.clone();
++                    EditReport rep = new EditReport();
++                    boolean parsed;
++                    try {
++                        parsed = ExifTiff.scrubInPlace(buf, 37, b.length, s, rep, WHERE);
++                    } catch (Throwable t) {
++                        AssertionError ae = new AssertionError("scrub threw for seed#" + seeds.indexOf(seed) + " iter " + iter);
++                        ae.initCause(t);
++                        throw ae;
++                    }
++                    String what = "fuzz seed#" + seeds.indexOf(seed) + " iter " + iter + " kind " + kind;
++                    outsideUnchanged(orig, buf, b.length, what);
++                    if (!parsed) {
++                        T.check(Arrays.equals(orig, buf), what + ": modified although not parsed");
++                        T.check(rep.changes.isEmpty() && rep.warnings.isEmpty(), what + ": report filled although not parsed");
++                    } else {
++                        ok++;
++                        T.check(allPrefixed(rep, WHERE + ": "), what + ": prefix " + rep);
++                        // the result is still a parseable block for both editors
++                        byte[] res = embedded(buf, b.length);
++                        T.check(ExifTiff.scrubInPlace(buf, 37, b.length, s, new EditReport(), WHERE), what + ": re-parse");
++                        ExifTiff.inspect(res, new MediaInfo());
++                        try {
++                            ExifTiff.edit(res, s, Integer.MAX_VALUE, new EditReport());
++                        } catch (UnsupportedFormatException e) {
++                            T.check(e.getCause() == null, what + ": internal error in edit after scrub");
++                        }
++                    }
++                    n++;
++                }
++            }
++        }
++        T.check(n >= 6000, "fuzz iterations " + n);
++        T.check(ok > n / 3, "too few parsed fuzz inputs: " + ok + " of " + n);
++    }
++
++    // =====================================================================================
++    // Tests: real-world sample photos (skipped when the sample directory is not available)
++    // =====================================================================================
++
++    /**
++     * Real camera/phone files (piexif and pillow_heif test images): system property
++     * {@code metakamera.samples}, environment variable METAKAMERA_SAMPLES, or the local default.
++     * Null when the directory does not exist (e.g. on CI) - the tests then skip.
++     */
++    static File realSamples() {
++        String p = System.getProperty("metakamera.samples");
++        if (p == null) p = System.getenv("METAKAMERA_SAMPLES");
++        if (p == null) p = "/tmp/claude-0/-home-user-llm-checkpoint-sync/8adfd8f4-da6d-5b54-8001-5705d498f82b/scratchpad/samples/real";
++        File d = new File(p);
++        return d.isDirectory() ? d : null;
++    }
++
++    static final String[] REAL_SAMPLES = {
++            "piexif-1.1.3/tests/images/r_olympus.jpg",   // "OLYMPUS DIGITAL CAMERA", LE
++            "piexif-1.1.3/tests/images/r_pen.jpg",
++            "piexif-1.1.3/tests/images/r_canon.jpg",
++            "piexif-1.1.3/tests/images/r_sony.jpg",      // LensInfo
++            "piexif-1.1.3/tests/images/r_pana.jpg",
++            "piexif-1.1.3/tests/images/r_casio.jpg",     // BE
++            "piexif-1.1.3/tests/images/r_ricoh.jpg",     // BE, no FocalLength in the Exif IFD
++            "piexif-1.1.3/tests/images/r_sigma.jpg",
++            "piexif-1.1.3/tests/images/L01.jpg",         // FocalLengthIn35mmFormat in IFD0
++            "piexif-1.1.3/tests/images/02.jpg",
++            "pillow_heif-1.8.1/tests/images/heif_special/xiaomi.heic",     // XiaomiModel in IFD0, thumbnail
++            "pillow_heif-1.8.1/tests/images/heif_other/pug.heic",          // Apple, BE, LensInfo
++            "pillow_heif-1.8.1/tests/images/heif_other/spatial_photo.heic",
++    };
++
++    /** Copies a real sample into the work dir and extracts its EXIF TIFF block with exiftool (null when it has none). */
++    static byte[] realExif(File dir, String rel, File copy) throws IOException {
++        T.write(copy, T.read(new File(dir, rel)));
++        byte[] b = execBytes("exiftool", "-b", "-EXIF", copy.getAbsolutePath());
++        return b.length >= 8 && (b[0] == 'I' || b[0] == 'M') ? b : null;
++    }
++
++    static File exifFile(String name, byte[] tiff) throws IOException {
++        File f = T.file(name);
++        T.write(f, tiff);
++        return f;
++    }
++
++    public static void testRealSamplesInspectEditAndScrub() throws Exception {
++        File dir = realSamples();
++        if (dir == null || !T.hasTool("exiftool")) {
++            System.out.println("SKIP ExifTiffTest.testRealSamplesInspectEditAndScrub: no real sample directory");
++            return;
++        }
++        int done = 0;
++        for (String rel : REAL_SAMPLES) {
++            if (!new File(dir, rel).isFile()) continue;
++            String base = new File(rel).getName().replace('.', '_');
++            File copy = T.file("real-" + new File(rel).getName());
++            byte[] tiff = realExif(dir, rel, copy);
++            T.check(tiff != null, rel + ": EXIF extracted");
++            File srcF = exifFile("real-" + base + "-src.exif", tiff);
++            Map<String, String> n0 = T.exif(srcF, "-n");
++            String oldMake = n0.get("IFD0:Make");
++
++            // inspect agrees with exiftool
++            MediaInfo info = new MediaInfo();
++            ExifTiff.inspect(tiff, info);
++            T.eq(oldMake, info.make, rel + ": inspect make");
++            String fl = n0.get("ExifIFD:FocalLength");
++            if (fl != null) near(Double.parseDouble(fl), info.focalLengthMm, 1e-6, rel + ": inspect focal");
++            else T.check(info.focalLengthMm == 0, rel + ": no focal length " + info.focalLengthMm);
++            String fn = n0.get("ExifIFD:FNumber");
++            if (fn != null) near(Double.parseDouble(fn), info.fNumber, 1e-6, rel + ": inspect fNumber");
++            String f35 = n0.containsKey("ExifIFD:FocalLengthIn35mmFormat") ? n0.get("ExifIFD:FocalLengthIn35mmFormat")
++                    : n0.get("IFD0:FocalLengthIn35mmFormat");
++            if (f35 != null && Integer.parseInt(f35) > 0) T.eq(Integer.parseInt(f35), info.focalLength35mm, rel + ": inspect 35mm");
++            String w = n0.get("ExifIFD:ExifImageWidth");
++            if (w != null) T.eq(Integer.parseInt(w), info.exifImageWidth, rel + ": inspect width");
++
++            // full edit (append strategy)
++            EditSpec spec = withOptics(T.appleSpec());
++            EditReport rep = new EditReport();
++            byte[] out = ExifTiff.edit(tiff, spec, Integer.MAX_VALUE, rep);
++            File outF = exifFile("real-" + base + "-edit.exif", out);
++            Map<String, String> m = T.exif(outF, "-n");
++            T.eq("Apple", m.get("IFD0:Make"), rel + ": make");
++            T.eq("iPhone 17 Pro Max", m.get("IFD0:Model"), rel + ": model");
++            T.eq("6.765", m.get("ExifIFD:FocalLength"), rel + ": focal");
++            T.eq("24", m.get("ExifIFD:FocalLengthIn35mmFormat"), rel + ": 35mm");
++            T.eq("1.78", m.get("ExifIFD:FNumber"), rel + ": fnumber");
++            near(1.78, num(m, "ExifIFD:ApertureValue"), 0.005, rel + ": aperture");
++            if (n0.containsKey("ExifIFD:MaxApertureValue")) near(1.78, num(m, "ExifIFD:MaxApertureValue"), 0.005, rel + ": max aperture");
++            else T.eq(null, m.get("ExifIFD:MaxApertureValue"), rel + ": MaxApertureValue not created");
++            if (n0.containsKey("ExifIFD:LensInfo")) T.eq("2.22 9 1.78 2.8", m.get("ExifIFD:LensInfo"), rel + ": lens info");
++            else T.eq(null, m.get("ExifIFD:LensInfo"), rel + ": LensInfo not created");
++            T.eq("5712", m.get("ExifIFD:ExifImageWidth"), rel + ": width");
++            T.eq("4284", m.get("ExifIFD:ExifImageHeight"), rel + ": height");
++            if (n0.containsKey("IFD0:FocalLengthIn35mmFormat")) T.eq("24", m.get("IFD0:FocalLengthIn35mmFormat"), rel + ": IFD0 copy");
++            for (String k : m.keySet()) {
++                T.check(!k.contains("MakerNote") && !k.startsWith("MakerUnknown") && !k.contains("Xiaomi"), rel + ": trace survived " + k);
++            }
++            String desc = m.get("IFD0:ImageDescription");
++            T.check(desc == null || !desc.toUpperCase(java.util.Locale.ROOT).contains("OLYMPUS"), rel + ": brand description " + desc);
++            assertNoNewWarnings(srcF, outF);
++            T.eq(n0.get("ExifIFD:DateTimeOriginal"), m.get("ExifIFD:DateTimeOriginal"), rel + ": date kept");
++            T.check(ExifTiff.edit(out, spec, Integer.MAX_VALUE, new EditReport()) == out, rel + ": idempotent");
++            if (oldMake != null && oldMake.trim().length() >= 2 && !oldMake.trim().equalsIgnoreCase("Apple")) {
++                absent(out, oldMake.trim(), rel + ": old make bytes after edit");
++            }
++            if (rel.endsWith("r_olympus.jpg") || rel.endsWith("r_pen.jpg")) {
++                T.check(hasChange(rep, "EXIF ImageDescription" + TRACE), rel + ": OLYMPUS DIGITAL CAMERA removed " + rep);
++                T.check(desc == null, rel + ": description gone");
++            }
++
++            // JPEG: put the edited block back (it must fit in APP1) and compare the pixels
++            if (rel.endsWith(".jpg")) {
++                byte[] jpg = T.read(copy);
++                byte[] app1 = ExifTiff.edit(tiff, spec, APP1_MAX, new EditReport());
++                File dst = T.file("real-" + base + "-out.jpg");
++                T.write(dst, withExif(jpg, app1));
++                T.eq("0", T.exec("compare", "-metric", "AE", copy.getPath(), dst.getPath(), "null:").out.trim(), rel + ": pixels identical");
++                T.eq("Apple", T.exif(dst).get("IFD0:Make"), rel + ": make in JPEG");
++            }
++
++            // in-place scrub of the same block (as for a secondary image)
++            byte[] buf = embed(tiff);
++            byte[] orig = buf.clone();
++            EditReport rs = new EditReport();
++            T.check(ExifTiff.scrubInPlace(buf, 37, tiff.length, spec, rs, WHERE), rel + ": scrub parsed");
++            outsideUnchanged(orig, buf, tiff.length, rel);
++            byte[] sc = embedded(buf, tiff.length);
++            File scF = exifFile("real-" + base + "-scrub.exif", sc);
++            Map<String, String> ms = T.exif(scF, "-n");
++            String mk = ms.get("IFD0:Make");
++            T.check("Apple".equals(mk) || "".equals(mk), rel + ": scrubbed make " + mk);
++            String md = ms.get("IFD0:Model");
++            T.check(md == null || md.length() == 0 || md.equals("iPhone 17 Pro Max"), rel + ": scrubbed model " + md);
++            for (String k : ms.keySet()) {
++                T.check(!k.contains("MakerNote") && !k.startsWith("MakerUnknown") && !k.contains("Xiaomi"), rel + ": scrub trace " + k);
++            }
++            if (n0.containsKey("ExifIFD:FNumber")) T.eq("1.78", ms.get("ExifIFD:FNumber"), rel + ": scrub fnumber");
++            if (n0.containsKey("ExifIFD:FocalLength")) T.eq("6.765", ms.get("ExifIFD:FocalLength"), rel + ": scrub focal");
++            else T.eq(null, ms.get("ExifIFD:FocalLength"), rel + ": scrub creates nothing");
++            if (!n0.containsKey("ExifIFD:ApertureValue")) T.eq(null, ms.get("ExifIFD:ApertureValue"), rel + ": no AV created");
++            T.eq(n0.get("ExifIFD:DateTimeOriginal"), ms.get("ExifIFD:DateTimeOriginal"), rel + ": scrub keeps the date");
++            String sd = ms.get("IFD0:ImageDescription");
++            T.check(sd == null || !sd.toUpperCase(java.util.Locale.ROOT).contains("OLYMPUS"), rel + ": scrub description " + sd);
++            if (oldMake != null && oldMake.trim().length() >= 2 && !oldMake.trim().equalsIgnoreCase("Apple")) {
++                absent(sc, oldMake.trim(), rel + ": old make bytes after scrub");
++            }
++            assertNoNewWarnings(srcF, scF);
++            byte[] again = buf.clone();
++            EditReport rs2 = new EditReport();
++            T.check(ExifTiff.scrubInPlace(again, 37, tiff.length, spec, rs2, WHERE), rel + ": scrub again");
++            T.check(Arrays.equals(buf, again) && rs2.changes.isEmpty(), rel + ": scrub idempotent " + rs2);
++            done++;
++        }
++        T.check(done >= 5, "real samples processed: " + done);
++    }
+ }

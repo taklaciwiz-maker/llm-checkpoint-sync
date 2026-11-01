@@ -1,0 +1,2102 @@
+diff --git a/metakamera-android/res/layout/card_device.xml b/metakamera-android/res/layout/card_device.xml
+index 419df44..2c783df 100644
+--- a/metakamera-android/res/layout/card_device.xml
++++ b/metakamera-android/res/layout/card_device.xml
+@@ -7,10 +7,25 @@
+         style="@style/MK.CardTitle"
+         android:text="@string/card_device_title" />
+ 
++    <!-- Quick phone search (suggestions from DeviceSearchAdapter); "Telefon Seç" below opens the full list. -->
++    <AutoCompleteTextView
++        android:id="@+id/device_search"
++        style="@style/MK.Field"
++        android:layout_marginTop="12dp"
++        android:completionThreshold="1"
++        android:drawableLeft="@drawable/ic_search"
++        android:drawablePadding="8dp"
++        android:drawableStart="@drawable/ic_search"
++        android:dropDownVerticalOffset="4dp"
++        android:ellipsize="end"
++        android:hint="@string/device_search_hint"
++        android:imeOptions="actionSearch|flagNoExtractUi"
++        android:inputType="text|textNoSuggestions" />
++
+     <LinearLayout
+         android:layout_width="match_parent"
+         android:layout_height="wrap_content"
+-        android:layout_marginTop="12dp"
++        android:layout_marginTop="14dp"
+         android:gravity="center_vertical"
+         android:orientation="horizontal">
+ 
+@@ -62,4 +77,53 @@
+         android:layout_height="wrap_content"
+         android:layout_marginTop="14dp"
+         android:text="@string/pick_device" />
++
++    <!-- Camera module of the chosen phone; hidden for phones without camera data. -->
++    <LinearLayout
++        android:id="@+id/camera_section"
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:orientation="vertical"
++        android:visibility="gone">
++
++        <TextView
++            style="@style/MK.Label"
++            android:layout_marginTop="16dp"
++            android:labelFor="@+id/camera_spinner"
++            android:text="@string/camera_label" />
++
++        <Spinner
++            android:id="@+id/camera_spinner"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:minHeight="48dp" />
++
++        <LinearLayout
++            android:id="@+id/resolution_row"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:orientation="vertical">
++
++            <TextView
++                style="@style/MK.Label"
++                android:labelFor="@+id/resolution_spinner"
++                android:text="@string/resolution_label" />
++
++            <Spinner
++                android:id="@+id/resolution_spinner"
++                android:layout_width="match_parent"
++                android:layout_height="wrap_content"
++                android:minHeight="48dp" />
++        </LinearLayout>
++
++        <TextView
++            style="@style/MK.Secondary"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:layout_marginTop="6dp"
++            android:paddingLeft="4dp"
++            android:paddingStart="4dp"
++            android:text="@string/camera_note"
++            android:textSize="12sp" />
++    </LinearLayout>
+ </LinearLayout>
+diff --git a/metakamera-android/res/layout/card_options.xml b/metakamera-android/res/layout/card_options.xml
+index efa341f..0e1f291 100644
+--- a/metakamera-android/res/layout/card_options.xml
++++ b/metakamera-android/res/layout/card_options.xml
+@@ -18,6 +18,16 @@
+         style="@style/MK.Check"
+         android:text="@string/opt_lens" />
+ 
++    <CheckBox
++        android:id="@+id/opt_optics"
++        style="@style/MK.Check"
++        android:text="@string/opt_optics" />
++
++    <CheckBox
++        android:id="@+id/opt_exif_size"
++        style="@style/MK.Check"
++        android:text="@string/opt_exif_size" />
++
+     <CheckBox
+         android:id="@+id/opt_software"
+         style="@style/MK.Check"
+diff --git a/metakamera-android/res/layout/part_header.xml b/metakamera-android/res/layout/part_header.xml
+index 97eb8f2..81e4f06 100644
+--- a/metakamera-android/res/layout/part_header.xml
++++ b/metakamera-android/res/layout/part_header.xml
+@@ -7,6 +7,15 @@
+     android:paddingBottom="12dp"
+     android:paddingTop="12dp">
+ 
++    <!-- Initial-focus sink: Android 8.x gives the first focusable-in-touch-mode view focus at start-up,
++         which would be the phone search field and scroll the screen to it. MainActivity makes this
++         invisible view focusable on API < 28 only. -->
++    <View
++        android:id="@+id/focus_sink"
++        android:layout_width="0dp"
++        android:layout_height="0dp"
++        android:importantForAccessibility="no" />
++
+     <LinearLayout
+         android:layout_width="0dp"
+         android:layout_height="wrap_content"
+diff --git a/metakamera-android/res/layout/row_device.xml b/metakamera-android/res/layout/row_device.xml
+index e44470b..98794a7 100644
+--- a/metakamera-android/res/layout/row_device.xml
++++ b/metakamera-android/res/layout/row_device.xml
+@@ -32,6 +32,18 @@
+             android:layout_marginTop="1dp"
+             android:ellipsize="end"
+             android:singleLine="true" />
++
++        <!-- "Ana 200 MP · Geniş 50 MP · Tele 3x 10 MP"; gone for phones without camera data -->
++        <TextView
++            android:id="@+id/row_cameras"
++            style="@style/MK.Secondary"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:layout_marginTop="1dp"
++            android:ellipsize="end"
++            android:maxLines="2"
++            android:textSize="12sp"
++            android:visibility="gone" />
+     </LinearLayout>
+ 
+     <TextView
+diff --git a/metakamera-android/res/layout/row_search.xml b/metakamera-android/res/layout/row_search.xml
+new file mode 100644
+index 0000000..f03fc1e
+--- /dev/null
++++ b/metakamera-android/res/layout/row_search.xml
+@@ -0,0 +1,55 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- One suggestion of the main-screen quick phone search (DeviceSearchAdapter). -->
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:gravity="center_vertical"
++    android:minHeight="56dp"
++    android:orientation="horizontal"
++    android:paddingBottom="8dp"
++    android:paddingLeft="16dp"
++    android:paddingRight="12dp"
++    android:paddingTop="8dp">
++
++    <LinearLayout
++        android:layout_width="0dp"
++        android:layout_height="wrap_content"
++        android:layout_weight="1"
++        android:orientation="vertical">
++
++        <TextView
++            android:id="@+id/search_title"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:ellipsize="end"
++            android:fontFamily="sans-serif-medium"
++            android:singleLine="true"
++            android:textColor="@color/mk_text"
++            android:textSize="15sp" />
++
++        <TextView
++            android:id="@+id/search_detail"
++            style="@style/MK.Secondary"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:layout_marginTop="1dp"
++            android:ellipsize="end"
++            android:maxLines="2"
++            android:textSize="12sp" />
++    </LinearLayout>
++
++    <TextView
++        android:id="@+id/search_year"
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:layout_marginLeft="8dp"
++        android:layout_marginStart="8dp"
++        android:background="@drawable/bg_chip"
++        android:fontFamily="sans-serif-medium"
++        android:paddingBottom="3dp"
++        android:paddingLeft="10dp"
++        android:paddingRight="10dp"
++        android:paddingTop="3dp"
++        android:textColor="@color/mk_accent"
++        android:textSize="12sp" />
++</LinearLayout>
+diff --git a/metakamera-android/res/layout/spinner_dropdown_item.xml b/metakamera-android/res/layout/spinner_dropdown_item.xml
+new file mode 100644
+index 0000000..39da8ee
+--- /dev/null
++++ b/metakamera-android/res/layout/spinner_dropdown_item.xml
+@@ -0,0 +1,17 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Open list of the camera / resolution spinners. -->
++<TextView xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@android:id/text1"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:ellipsize="end"
++    android:gravity="center_vertical"
++    android:maxLines="3"
++    android:minHeight="48dp"
++    android:paddingBottom="10dp"
++    android:paddingLeft="16dp"
++    android:paddingRight="16dp"
++    android:paddingTop="10dp"
++    android:textAlignment="viewStart"
++    android:textColor="@color/mk_text"
++    android:textSize="15sp" />
+diff --git a/metakamera-android/res/layout/spinner_item.xml b/metakamera-android/res/layout/spinner_item.xml
+new file mode 100644
+index 0000000..8acbd86
+--- /dev/null
++++ b/metakamera-android/res/layout/spinner_item.xml
+@@ -0,0 +1,17 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Closed state of the camera / resolution spinners: long labels may wrap to two lines. -->
++<TextView xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@android:id/text1"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:ellipsize="end"
++    android:gravity="center_vertical"
++    android:maxLines="2"
++    android:minHeight="48dp"
++    android:paddingBottom="6dp"
++    android:paddingLeft="4dp"
++    android:paddingRight="4dp"
++    android:paddingTop="6dp"
++    android:textAlignment="viewStart"
++    android:textColor="@color/mk_text"
++    android:textSize="15sp" />
+diff --git a/metakamera-android/res/values/strings.xml b/metakamera-android/res/values/strings.xml
+index 53d747b..0d60053 100644
+--- a/metakamera-android/res/values/strings.xml
++++ b/metakamera-android/res/values/strings.xml
+@@ -20,13 +20,20 @@
+     <string name="device_load_error">Telefon listesi yüklenemedi</string>
+     <string name="device_none">Henüz telefon seçilmedi</string>
+     <string name="device_detail">%1$d · %2$s · %3$s</string>
++    <string name="device_search_hint">Telefon ara (ör. pura 90s, s25 ultra, SM-S938B, 200 mp)</string>
++    <string name="device_search_chosen">Hedef telefon: %1$s</string>
++    <string name="camera_label">Kamera</string>
++    <string name="resolution_label">Çözünürlük</string>
++    <string name="camera_note">Fotoğrafın gerçek piksel sayısı değişmez; seçilen kameranın odak, diyafram, lens ve çözünürlük bilgileri metadataya yazılır.</string>
+ 
+     <!-- 3. Options -->
+     <string name="card_options_title">3 · Seçenekler</string>
+     <string name="opt_icc">ICC profilindeki cihaz marka/model bilgisini değiştir</string>
+     <string name="opt_lens">Lens bilgisini hedef cihaza göre değiştir</string>
++    <string name="opt_optics">Kamera optik bilgilerini yaz (odak uzaklığı, diyafram, 35 mm eşdeğeri)</string>
++    <string name="opt_exif_size">EXIF çözünürlüğünü seçilen kameraya göre yaz</string>
+     <string name="opt_software">Yazılım (Software) bilgisini hedef cihaza göre ayarla</string>
+-    <string name="opt_traces">Orijinal markayı ele veren MakerNote ve seri numaralarını temizle</string>
++    <string name="opt_traces">Orijinal markayı ele veren izleri temizle (MakerNote, seri numaraları ve üreticiye özel etiketler)</string>
+     <string name="opt_xmp">XMP içindeki cihaz bilgisini güncelle</string>
+     <string name="advanced_show">Gelişmiş ▾</string>
+     <string name="advanced_hide">Gelişmiş ▴</string>
+@@ -80,6 +87,8 @@
+     <string name="item_changes">Değişiklikler:</string>
+     <string name="item_warnings">Uyarılar:</string>
+     <string name="item_no_changes">Değişiklik kaydı yok.</string>
++    <string name="item_camera_changes">Kamera bilgileri (önce → sonra):</string>
++    <string name="item_unchanged">değişmedi</string>
+     <string name="item_output">Çıktı: %1$s (%2$s)</string>
+     <string name="item_save">Galeriye Kopyala</string>
+     <string name="item_saving">Kopyalanıyor…</string>
+@@ -118,7 +127,7 @@
+ 
+     <!-- Device picker -->
+     <string name="picker_title">Telefon Seç</string>
+-    <string name="picker_search_hint">Ara: marka, model veya model kodu</string>
++    <string name="picker_search_hint">Ara: marka, model, model kodu veya MP</string>
+     <string name="picker_all_brands">Tüm markalar</string>
+     <string name="picker_empty">Sonuç bulunamadı</string>
+     <string name="picker_variant">Model kodu</string>
+@@ -130,7 +139,7 @@
+     <!-- Help -->
+     <string name="help_title">Nasıl çalışır?</string>
+     <string name="help_ok">Tamam</string>
+-    <string name="help_body">MetaKamera, fotoğraf ve videolarınızın yalnızca metadata (üst veri) kısmını değiştirir. Fotoğraf pikselleri ve video kareleri bayt bayt aynen korunur; yeniden sıkıştırma yapılmaz, kalite kaybı olmaz.\n\nDeğiştirilenler:\n• EXIF Make / Model (marka ve model)\n• HostComputer ile isteğe bağlı olarak Software ve LensMake / LensModel\n• Gömülü ICC renk profilindeki cihaz üreticisi ve modeli\n• XMP içindeki cihaz bilgileri ve videolardaki marka/model etiketleri\n• İsteğe bağlı: orijinal markayı ele veren MakerNote ve seri numaraları temizlenir\n\nKorunanlar: çekim tarihi ve saati, konum (GPS) bilgisi, çözünürlük, yön ve diğer tüm veriler.\n\nDesteklenen biçimler: JPEG, HEIC/HEIF, AVIF, PNG, WebP, MP4, MOV, 3GP.\n\nKullanım: 1) Fotoğraf veya videoları seçin, 2) hedef telefonu seçin, 3) «Metadata\'yı Düzenle» düğmesine dokunun, ardından sonucu galeriye kopyalayın ya da paylaşın. Orijinal dosyalarınız değiştirilmez; düzenlenen kopyalar ayrıca kaydedilir.\n\nİpucu: Galeriden seçilen bazı dosyalarda konum bilgisi sistem tarafından gizlenebilir. Konumun eksiksiz korunması için «Dosyalardan Seç» seçeneğini kullanın.</string>
++    <string name="help_body">MetaKamera, fotoğraf ve videolarınızın yalnızca metadata (üst veri) kısmını değiştirir. Fotoğraf pikselleri ve video kareleri bayt bayt aynen korunur; yeniden sıkıştırma yapılmaz, kalite kaybı olmaz.\n\nDeğiştirilenler:\n• EXIF Make / Model (marka ve model) ve HostComputer\n• İsteğe bağlı: Software ile LensMake / LensModel (seçilen kameranın lens adı)\n• İsteğe bağlı: seçilen kameranın optik bilgileri; odak uzaklığı, diyafram (f değeri), 35 mm eşdeğeri ve lens özellikleri\n• İsteğe bağlı: EXIF çözünürlüğü, seçilen kameranın çıktı boyutuna göre (fotoğrafın en-boy oranı ve yönü korunur)\n• Gömülü ICC renk profilindeki cihaz üreticisi ve modeli ile markaya özgü telif hakkı ve profil açıklaması metinleri\n• XMP içindeki cihaz bilgileri ve videolardaki marka/model etiketleri\n• İsteğe bağlı: orijinal markayı ele veren MakerNote, seri numaraları ve üreticiye özel etiketler temizlenir\n\nTelefon ve kamera seçimi: Hedef telefonu arama kutusuna adını, model kodunu (ör. SM-S938B) ya da kamera çözünürlüğünü (ör. 200 mp) yazarak hızlıca bulabilir veya «Telefon Seç» listesinden seçebilirsiniz. Ardından telefonun ana, geniş açı ya da telefoto kamerasını ve bu kameranın çözünürlük modunu seçin; seçimleriniz her telefon için hatırlanır.\n\nÇözünürlük hakkında: Fotoğrafın gerçek piksel sayısı değişmez. Yalnızca EXIF\'teki çözünürlük bilgisi seçilen kameraya göre yazılır. Videolarda lens adı ve 35 mm eşdeğeri güncellenir; EXIF çözünürlüğü yalnızca fotoğraflara yazılır.\n\nKorunanlar: çekim tarihi ve saati, konum (GPS) bilgisi, gerçek piksel boyutu, yön ve diğer tüm veriler.\n\nDesteklenen biçimler: JPEG, HEIC/HEIF, AVIF, PNG, WebP, MP4, MOV, 3GP.\n\nKullanım: 1) Fotoğraf veya videoları seçin, 2) hedef telefonu ve kamerayı seçin, 3) «Metadata\'yı Düzenle» düğmesine dokunun, ardından sonucu galeriye kopyalayın ya da paylaşın. Orijinal dosyalarınız değiştirilmez; düzenlenen kopyalar ayrıca kaydedilir. Her dosyanın «Ayrıntılar» bölümünde odak, diyafram, 35 mm eşdeğeri ve EXIF çözünürlüğünün önceki ve sonraki değerlerini görebilirsiniz.\n\nİpucu: Galeriden seçilen bazı dosyalarda konum bilgisi sistem tarafından gizlenebilir. Konumun eksiksiz korunması için «Dosyalardan Seç» seçeneğini kullanın.</string>
+ 
+     <!-- Sharing -->
+     <string name="share_title">Paylaş</string>
+diff --git a/metakamera-android/src/com/metakamera/app/AppState.java b/metakamera-android/src/com/metakamera/app/AppState.java
+index 6db53fd..99b7233 100644
+--- a/metakamera-android/src/com/metakamera/app/AppState.java
++++ b/metakamera-android/src/com/metakamera/app/AppState.java
+@@ -99,6 +99,10 @@ final class AppState {
+     Device device;
+     /** Selected regional model code, null = main model. */
+     String variant;
++    /** Index of the chosen camera in device.cameras, -1 = none (phone without camera data). */
++    int cameraIndex = -1;
++    /** Index of the chosen output size of that camera (0 = its default). */
++    int outputIndex;
+     final EditOptions options = new EditOptions();
+     boolean advancedExpanded;
+ 
+@@ -200,6 +204,7 @@ final class AppState {
+         }
+         device = d;
+         variant = normalizeVariant(d, v);
++        restoreCamera();
+     }
+ 
+     private static String normalizeVariant(Device d, String v) {
+@@ -216,11 +221,65 @@ final class AppState {
+         device = d;
+         variant = normalizeVariant(d, v);
+         prefs.setDevice(d.key, variant);
++        restoreCamera();
+         options.clearOverrides();
+         notifyDevice();
+         notifyBusy();
+     }
+ 
++    // ------------------------------------------------------------------ camera module
++
++    /** The chosen camera of the current phone, null when it has no camera data. */
++    CameraModule camera() {
++        Device d = device;
++        if (d == null || cameraIndex < 0 || cameraIndex >= d.cameras.size()) return null;
++        return d.cameras.get(cameraIndex);
++    }
++
++    /** The chosen output size {W, H} (W >= H) of the chosen camera, null when unknown. */
++    int[] output() {
++        CameraModule c = camera();
++        return c == null ? null : c.output(outputIndex);
++    }
++
++    void setCamera(int index) {
++        Device d = device;
++        if (d == null || index < 0 || index >= d.cameras.size() || index == cameraIndex) return;
++        cameraIndex = index;
++        outputIndex = rememberedOutput(d, index);
++        prefs.setCameraId(d.key, d.cameraId(index));
++        notifyDevice();
++    }
++
++    void setOutput(int index) {
++        Device d = device;
++        CameraModule c = camera();
++        if (d == null || c == null || index < 0 || index >= c.outputCount() || index == outputIndex) return;
++        outputIndex = index;
++        prefs.setOutputKey(d.key, d.cameraId(cameraIndex), c.outputKey(index));
++        notifyDevice();
++    }
++
++    /** Camera and output size remembered for the current phone, else its main camera's default output. */
++    private void restoreCamera() {
++        Device d = device;
++        if (d == null || d.cameras.isEmpty()) {
++            cameraIndex = -1;
++            outputIndex = 0;
++            return;
++        }
++        int idx = d.cameraIndex(prefs.cameraId(d.key));
++        if (idx < 0) idx = d.defaultCameraIndex();
++        cameraIndex = idx;
++        outputIndex = rememberedOutput(d, idx);
++    }
++
++    private int rememberedOutput(Device d, int camIndex) {
++        if (camIndex < 0 || camIndex >= d.cameras.size()) return 0;
++        int i = d.cameras.get(camIndex).outputIndex(prefs.outputKey(d.key, d.cameraId(camIndex)));
++        return Math.max(i, 0);
++    }
++
+     void saveOptions() {
+         prefs.saveOptions(options);
+     }
+@@ -351,8 +410,8 @@ final class AppState {
+             message(app.getString(R.string.msg_need_files));
+             return false;
+         }
+-        final EditSpec spec = SpecBuilder.build(device, brandInfo(), variant, options);
+-        if (spec == null) {
++        final SpecBuilder.Plan plan = SpecBuilder.plan(device, brandInfo(), variant, camera(), output(), options);
++        if (plan == null) {
+             message(app.getString(R.string.msg_need_device));
+             return false;
+         }
+@@ -380,7 +439,7 @@ final class AppState {
+             public void run() {
+                 try {
+                     for (File f : oldOutputs) deleteOutput(f);
+-                    for (int i = 0; i < list.size(); i++) processOne(list.get(i), i, spec, keepName, now);
++                    for (int i = 0; i < list.size(); i++) processOne(list.get(i), i, plan, keepName, now);
+                 } finally {
+                     post(new Runnable() {
+                         @Override
+@@ -404,7 +463,7 @@ final class AppState {
+     }
+ 
+     /** Worker thread: edits one item into cacheDir/edited/&lt;n&gt;/&lt;name&gt;. Never throws. */
+-    private void processOne(final MediaItem it, final int index, EditSpec spec, boolean keepName, long now) {
++    private void processOne(final MediaItem it, final int index, SpecBuilder.Plan plan, boolean keepName, long now) {
+         if (it.removed) return;
+         post(new Runnable() {
+             @Override
+@@ -432,8 +491,11 @@ final class AppState {
+             try {
+                 srcInfo = MetadataEditor.inspect(src);
+             } catch (Throwable ignored) {
+-                // only used for naming; the edit reports real problems
++                // only used for naming and the raster size; the edit reports real problems
+             }
++            // per item: the EXIF pixel size follows this file's own raster size and orientation
++            EditSpec spec = plan.forItem(fmt.isVideo, srcInfo != null ? srcInfo.width : 0,
++                    srcInfo != null ? srcInfo.height : 0);
+             File base = EditedFileProvider.editedDir(app);
+             if (!base.isDirectory() && !base.mkdirs()) throw new UserException("Çıktı klasörü oluşturulamadı");
+             long need = src.length() + 2L * 1024 * 1024;
+diff --git a/metakamera-android/src/com/metakamera/app/BrandInfo.java b/metakamera-android/src/com/metakamera/app/BrandInfo.java
+index b552fef..0577876 100644
+--- a/metakamera-android/src/com/metakamera/app/BrandInfo.java
++++ b/metakamera-android/src/com/metakamera/app/BrandInfo.java
+@@ -1,26 +1,42 @@
+ package com.metakamera.app;
+ 
+ /**
+- * Brand-level data from the device database: the ICC header identity written for this brand.
++ * Brand-level data from the device database: the EXIF make and the ICC identity written for this brand.
+  * Every signature follows {@link com.metakamera.core.IccIdentity}: null = keep the existing header
+- * field, "" = zero it, otherwise the 4-character signature.
++ * field, "" = zero it, otherwise the 4-character signature. {@link #copyright} and
++ * {@link #p3Description} are ICC texts (null = keep).
+  */
+ public final class BrandInfo {
+ 
+     public final String name;
++    /** Brand-level EXIF Make ("Apple", "samsung"); null when the database has none. */
++    public final String make;
+     public final String iccManufacturer;
+     public final String iccModel;
+     public final String iccCmm;
+     public final String iccPlatform;
+     public final String iccCreator;
++    /** ICC 'cprt' text the brand's phones write, e.g. "Copyright Apple Inc., 2022"; null = keep. */
++    public final String copyright;
++    /** ICC description of the brand's Display P3 profile, e.g. "Display P3"; null = keep. */
++    public final String p3Description;
+ 
+-    public BrandInfo(String name, String iccManufacturer, String iccModel, String iccCmm, String iccPlatform,
+-                     String iccCreator) {
++    public BrandInfo(String name, String make, String iccManufacturer, String iccModel, String iccCmm,
++                     String iccPlatform, String iccCreator, String copyright, String p3Description) {
+         this.name = name == null ? "" : name.trim();
++        this.make = make;
+         this.iccManufacturer = iccManufacturer;
+         this.iccModel = iccModel;
+         this.iccCmm = iccCmm;
+         this.iccPlatform = iccPlatform;
+         this.iccCreator = iccCreator;
++        this.copyright = copyright;
++        this.p3Description = p3Description;
++    }
++
++    /** v1 form (no make / ICC texts). */
++    public BrandInfo(String name, String iccManufacturer, String iccModel, String iccCmm, String iccPlatform,
++                     String iccCreator) {
++        this(name, null, iccManufacturer, iccModel, iccCmm, iccPlatform, iccCreator, null, null);
+     }
+ }
+diff --git a/metakamera-android/src/com/metakamera/app/CameraModule.java b/metakamera-android/src/com/metakamera/app/CameraModule.java
+new file mode 100644
+index 0000000..f98ed6e
+--- /dev/null
++++ b/metakamera-android/src/com/metakamera/app/CameraModule.java
+@@ -0,0 +1,116 @@
++package com.metakamera.app;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Locale;
++
++/**
++ * One rear camera of a phone ("cameras" of devices.json v2). Immutable, no Android dependencies.
++ * Unknown numbers are 0, an unknown lens name is "".
++ */
++public final class CameraModule {
++
++    public static final int ROLE_MAIN = 0;
++    public static final int ROLE_ULTRAWIDE = 1;
++    public static final int ROLE_TELEPHOTO = 2;
++    public static final int ROLE_OTHER = 3;
++
++    /** Largest accepted output edge; anything bigger is treated as a database error. */
++    private static final int MAX_EDGE = 65535;
++
++    /** One of the ROLE_* constants. */
++    public final int role;
++    /** Zoom factor relative to the main camera (0.5, 1, 3, 5 ...), 0 = unknown. */
++    public final double zoom;
++    /** Sensor resolution as marketed, in megapixels (48, 50.3, 200 ...), 0 = unknown. */
++    public final double mp;
++    /** 35 mm equivalent focal length in mm, 0 = unknown. */
++    public final int f35;
++    /** Real focal length in mm, 0 = unknown. */
++    public final double fmm;
++    /** Aperture (f-number), 0 = unknown. */
++    public final double fn;
++    /** EXIF LensModel the phone writes for this camera, "" = unknown. */
++    public final String lens;
++    /** Output sizes {W, H} with W >= H, duplicates removed; [0] is the camera's default. */
++    private final int[][] outputs;
++
++    public CameraModule(String role, double zoom, double mp, int f35, double fmm, double fn, String lens,
++                        int[][] outputs) {
++        this.role = parseRole(role);
++        this.zoom = valid(zoom, 1000) ? zoom : 0;
++        this.mp = valid(mp, 10000) ? mp : 0;
++        this.f35 = f35 > 0 && f35 < 10000 ? f35 : 0;
++        this.fmm = valid(fmm, 1000) ? fmm : 0;
++        this.fn = valid(fn, 100) ? fn : 0;
++        this.lens = lens == null ? "" : lens.trim();
++        List<int[]> outs = new ArrayList<int[]>();
++        if (outputs != null) {
++            for (int[] o : outputs) {
++                if (o == null || o.length < 2) continue;
++                int w = Math.max(o[0], o[1]);
++                int h = Math.min(o[0], o[1]);
++                if (h <= 0 || w > MAX_EDGE) continue;
++                boolean dup = false;
++                for (int[] e : outs) {
++                    if (e[0] == w && e[1] == h) {
++                        dup = true;
++                        break;
++                    }
++                }
++                if (!dup) outs.add(new int[]{w, h});
++            }
++        }
++        this.outputs = outs.toArray(new int[outs.size()][]);
++    }
++
++    /** "main" / "wide" -> main, "ultrawide" -> ultra-wide, "telephoto" / "periscope" -> telephoto. */
++    static int parseRole(String r) {
++        if (r == null) return ROLE_OTHER;
++        String n = r.trim().toLowerCase(Locale.ROOT).replace("-", "").replace("_", "").replace(" ", "");
++        if (n.equals("main") || n.equals("wide") || n.equals("primary")) return ROLE_MAIN;
++        if (n.startsWith("ultra") || n.equals("uw")) return ROLE_ULTRAWIDE;
++        if (n.startsWith("tele") || n.contains("periscope")) return ROLE_TELEPHOTO;
++        return ROLE_OTHER;
++    }
++
++    private static boolean valid(double v, double max) {
++        return !Double.isNaN(v) && !Double.isInfinite(v) && v > 0 && v < max;
++    }
++
++    /** True when the entry carries anything usable (entries without data are dropped by the parser). */
++    boolean hasData() {
++        return role != ROLE_OTHER || zoom > 0 || mp > 0 || f35 > 0 || fmm > 0 || fn > 0 || lens.length() > 0
++                || outputs.length > 0;
++    }
++
++    public int outputCount() {
++        return outputs.length;
++    }
++
++    /** Output size {W, H} (W >= H) at {@code index}, or null when out of range. A copy. */
++    public int[] output(int index) {
++        if (index < 0 || index >= outputs.length) return null;
++        return new int[]{outputs[index][0], outputs[index][1]};
++    }
++
++    /** "8064x6048": the key remembered in the preferences for an output size. */
++    public String outputKey(int index) {
++        if (index < 0 || index >= outputs.length) return null;
++        return outputs[index][0] + "x" + outputs[index][1];
++    }
++
++    /** Index of the output whose {@link #outputKey} is {@code key}, -1 when there is none. */
++    public int outputIndex(String key) {
++        if (key == null) return -1;
++        for (int i = 0; i < outputs.length; i++) {
++            if (key.equals(outputKey(i))) return i;
++        }
++        return -1;
++    }
++
++    /** Sort rank: main, ultra-wide, telephoto, others. */
++    int roleRank() {
++        return role;
++    }
++}
+diff --git a/metakamera-android/src/com/metakamera/app/CameraText.java b/metakamera-android/src/com/metakamera/app/CameraText.java
+new file mode 100644
+index 0000000..0761e5e
+--- /dev/null
++++ b/metakamera-android/src/com/metakamera/app/CameraText.java
+@@ -0,0 +1,154 @@
++package com.metakamera.app;
++
++import java.util.List;
++import java.util.Locale;
++
++/**
++ * Turkish labels for camera modules and optics values. Pure Java (no Android dependencies) so the
++ * formatting can be checked on a plain JVM.
++ *
++ * <pre>
++ * cameraLabel  "Ana kamera (1x) · 48 MP · f/1.8 · 24 mm"
++ * summary      "Ana 200 MP · Geniş 50 MP · Tele 3x 10 MP · Tele 5x 50 MP"
++ * outputLabel  "24 MP · 5712 × 4284 (varsayılan)", "12,5 MP · 4080 × 3060"
++ * </pre>
++ * Zoom factors and f-numbers keep the photographic dot notation ("0.5x", "f/2.2"); megapixels and
++ * millimetres use the Turkish decimal comma ("12,5 MP", "6,77 mm").
++ */
++final class CameraText {
++
++    static final String SEP = " · ";
++
++    private CameraText() {
++    }
++
++    static String roleLong(int role) {
++        switch (role) {
++            case CameraModule.ROLE_MAIN:
++                return "Ana kamera";
++            case CameraModule.ROLE_ULTRAWIDE:
++                return "Geniş açı";
++            case CameraModule.ROLE_TELEPHOTO:
++                return "Telefoto";
++            default:
++                return "Kamera";
++        }
++    }
++
++    static String roleShort(int role) {
++        switch (role) {
++            case CameraModule.ROLE_MAIN:
++                return "Ana";
++            case CameraModule.ROLE_ULTRAWIDE:
++                return "Geniş";
++            case CameraModule.ROLE_TELEPHOTO:
++                return "Tele";
++            default:
++                return "Kamera";
++        }
++    }
++
++    /** "Ana kamera (1x) · 48 MP · f/1.8 · 24 mm"; unknown parts are left out. */
++    static String cameraLabel(CameraModule c) {
++        StringBuilder sb = new StringBuilder(roleLong(c.role));
++        if (c.zoom > 0) sb.append(" (").append(zoom(c.zoom)).append(')');
++        if (c.mp > 0) sb.append(SEP).append(megapixels(c.mp)).append(" MP");
++        if (c.fn > 0) sb.append(SEP).append(fNumber(c.fn));
++        if (c.f35 > 0) sb.append(SEP).append(c.f35).append(" mm");
++        return sb.toString();
++    }
++
++    /** "Ana 200 MP · Geniş 50 MP · Tele 3x 10 MP", "" for a phone without camera data. */
++    static String summary(List<CameraModule> cameras) {
++        StringBuilder sb = new StringBuilder();
++        if (cameras == null) return "";
++        for (CameraModule c : cameras) {
++            if (sb.length() > 0) sb.append(SEP);
++            sb.append(roleShort(c.role));
++            if (c.zoom > 0 && c.role != CameraModule.ROLE_MAIN && c.role != CameraModule.ROLE_ULTRAWIDE) {
++                sb.append(' ').append(zoom(c.zoom));
++            }
++            if (c.mp > 0) sb.append(' ').append(megapixels(c.mp)).append(" MP");
++        }
++        return sb.toString();
++    }
++
++    /** "24 MP · 5712 × 4284 (varsayılan)" for output {@code index} of {@code c}; null when out of range. */
++    static String outputLabel(CameraModule c, int index) {
++        int[] o = c.output(index);
++        if (o == null) return null;
++        String s = outputMegapixels(o[0], o[1], c.mp) + " MP" + SEP + size(o[0], o[1]);
++        return index == 0 ? s + " (varsayılan)" : s;
++    }
++
++    /**
++     * Megapixels of a w x h output as a person would name it. The exact value w*h/1e6 is snapped to the
++     * camera's marketed resolution or its pixel-binned modes (mp/4, mp/9, mp/16) when it is within 3 %,
++     * so 8064 × 6048 of a 48 MP camera is "48" and 4032 × 3024 is "12". Otherwise: one decimal below
++     * 20 MP unless integral (4080 × 3060 -> "12,5"), whole numbers from 20 MP up (5712 × 4284 -> "24").
++     */
++    static String outputMegapixels(int w, int h, double cameraMp) {
++        double exact = (double) w * (double) h / 1e6;
++        if (exact <= 0) return "0";
++        if (cameraMp > 0) {
++            double best = 0;
++            double bestDiff = Double.MAX_VALUE;
++            int[] divisors = {1, 4, 9, 16};
++            for (int div : divisors) {
++                double cand = cameraMp / div;
++                if (cand < 1) continue;
++                double diff = Math.abs(exact - cand);
++                if (diff <= cand * 0.03 && diff < bestDiff) {
++                    best = cand;
++                    bestDiff = diff;
++                }
++            }
++            if (best > 0) return megapixels(best);
++        }
++        if (exact < 20) return oneDecimal(exact);
++        return Long.toString(Math.round(exact));
++    }
++
++    /** Marketed megapixels: whole numbers as is ("48"), others with one decimal ("10,8", "50,3"). */
++    static String megapixels(double mp) {
++        return oneDecimal(mp);
++    }
++
++    /** "0.5x", "1x", "3.5x". */
++    static String zoom(double z) {
++        return trim(z, 2, '.') + "x";
++    }
++
++    /** "f/1.8", "f/1.65". */
++    static String fNumber(double fn) {
++        return "f/" + trim(fn, 2, '.');
++    }
++
++    /** "6,77 mm", "15 mm". */
++    static String mm(double v) {
++        return trim(v, 2, ',') + " mm";
++    }
++
++    /** "5712 × 4284". */
++    static String size(int w, int h) {
++        return w + " × " + h;
++    }
++
++    /** One decimal with a Turkish comma, without ",0": 12.19 -> "12,2", 7.99 -> "8", 50.3 -> "50,3". */
++    static String oneDecimal(double v) {
++        return trim(v, 1, ',');
++    }
++
++    /** {@code v} rounded to at most {@code decimals} digits, trailing zeros removed. */
++    static String trim(double v, int decimals, char separator) {
++        String s = String.format(Locale.ROOT, "%." + decimals + "f", v);
++        if (s.indexOf('.') >= 0) {
++            int end = s.length();
++            while (end > 0 && s.charAt(end - 1) == '0') end--;
++            if (end > 0 && s.charAt(end - 1) == '.') end--;
++            s = s.substring(0, end);
++        }
++        if (s.equals("-0")) s = "0";
++        return separator == '.' ? s : s.replace('.', separator);
++    }
++}
+diff --git a/metakamera-android/src/com/metakamera/app/Device.java b/metakamera-android/src/com/metakamera/app/Device.java
+index 0782476..80b1289 100644
+--- a/metakamera-android/src/com/metakamera/app/Device.java
++++ b/metakamera-android/src/com/metakamera/app/Device.java
+@@ -1,9 +1,12 @@
+ package com.metakamera.app;
+ 
+ import java.util.ArrayList;
++import java.util.Collections;
++import java.util.Comparator;
+ import java.util.List;
++import java.util.Locale;
+ 
+-/** One phone of the device database (assets/devices.json). Immutable. */
++/** One phone of the device database (assets/devices.json). Immutable, no Android dependencies. */
+ public final class Device {
+ 
+     public final String brand;
+@@ -21,14 +24,36 @@ public final class Device {
+     public final String lensModel;
+     /** EXIF HostComputer ("" removes it, which matters when the source was an iPhone). */
+     public final String hostComputer;
++    /**
++     * Rear cameras: main first, then ultra-wide, then telephotos by zoom (database order otherwise).
++     * Empty when the database has no camera data for this phone. Unmodifiable.
++     */
++    public final List<CameraModule> cameras;
+ 
+     /** Stable identifier for preferences: brand + '|' + name. */
+     public final String key;
+-    /** Normalized text used by the picker search. */
++    /** Per-camera preference ids ("main@1", "telephoto@5"), parallel to {@link #cameras}. */
++    private final String[] cameraIds;
++    /** "Ana 48 MP · Geniş 48 MP · Tele 4x 48 MP", "" without camera data. */
++    private final String cameraSummary;
++
++    /**
++     * Normalized identity text (brand, name, make, model, year, variants), every word surrounded by
++     * spaces (see {@link TextNorm#matchesAll}).
++     */
+     final String searchText;
++    /** {@link TextNorm#compact} form of {@link #searchText}. */
++    final String searchCompact;
++    /** Camera unit words, " 200mp 50mp 0.6x 3x ": matched only by "200mp" / "3x" style query words. */
++    final String searchUnits;
++    /** Normalized name, display name, model and variants (ranking: exact / prefix matches). */
++    final String[] rankKeys;
++    /** Compact forms of {@link #rankKeys}. */
++    final String[] rankCompacts;
+ 
+     public Device(String brand, String name, int year, String make, String model, String[] variants,
+-                  String software, String lensMake, String lensModel, String hostComputer) {
++                  String software, String lensMake, String lensModel, String hostComputer,
++                  List<CameraModule> cameras) {
+         this.brand = nn(brand);
+         this.name = nn(name);
+         this.year = year;
+@@ -49,11 +74,69 @@ public final class Device {
+         }
+         this.variants = v.toArray(new String[v.size()]);
+         this.key = this.brand + "|" + this.name;
++
++        List<CameraModule> cams = new ArrayList<CameraModule>();
++        if (cameras != null) {
++            for (CameraModule c : cameras) if (c != null) cams.add(c);
++        }
++        Collections.sort(cams, CAMERA_ORDER); // stable: equal entries keep the database order
++        this.cameras = Collections.unmodifiableList(cams);
++        this.cameraIds = new String[cams.size()];
++        for (int i = 0; i < cams.size(); i++) {
++            CameraModule c = cams.get(i);
++            String base = ROLE_IDS[c.role] + "@" + CameraText.trim(c.zoom, 2, '.');
++            String id = base;
++            int n = 2;
++            while (indexOf(cameraIds, id, i) >= 0) id = base + "#" + n++;
++            cameraIds[i] = id;
++        }
++        this.cameraSummary = CameraText.summary(this.cameras);
++
++        // ---- search
+         StringBuilder sb = new StringBuilder();
+         sb.append(this.brand).append(' ').append(this.name).append(' ').append(this.make).append(' ')
+                 .append(this.model).append(' ').append(year);
+         for (String s : this.variants) sb.append(' ').append(s);
+-        this.searchText = TextNorm.normalize(sb.toString());
++        if (this.name.indexOf('+') >= 0) sb.append(' ').append(this.name.replace("+", " plus"));
++        this.searchText = " " + TextNorm.normalizeQuery(sb.toString()) + " ";
++        this.searchCompact = TextNorm.compact(searchText);
++        StringBuilder units = new StringBuilder(" ");
++        for (CameraModule c : this.cameras) {
++            if (c.mp > 0) units.append(CameraText.trim(c.mp, 1, '.')).append("mp ");
++            if (c.zoom > 0) units.append(CameraText.trim(c.zoom, 2, '.')).append("x ");
++        }
++        this.searchUnits = units.toString();
++        List<String> keys = new ArrayList<String>();
++        keys.add(TextNorm.normalizeQuery(this.name));
++        keys.add(TextNorm.normalizeQuery(displayName()));
++        keys.add(TextNorm.normalizeQuery(this.model));
++        for (String s : this.variants) keys.add(TextNorm.normalizeQuery(s));
++        this.rankKeys = keys.toArray(new String[keys.size()]);
++        this.rankCompacts = new String[rankKeys.length];
++        for (int i = 0; i < rankKeys.length; i++) rankCompacts[i] = TextNorm.compact(rankKeys[i]);
++    }
++
++    /** v1 form: a phone without camera data. */
++    public Device(String brand, String name, int year, String make, String model, String[] variants,
++                  String software, String lensMake, String lensModel, String hostComputer) {
++        this(brand, name, year, make, model, variants, software, lensMake, lensModel, hostComputer, null);
++    }
++
++    private static final String[] ROLE_IDS = {"main", "ultrawide", "telephoto", "other"};
++
++    private static final Comparator<CameraModule> CAMERA_ORDER = new Comparator<CameraModule>() {
++        @Override
++        public int compare(CameraModule a, CameraModule b) {
++            if (a.roleRank() != b.roleRank()) return a.roleRank() < b.roleRank() ? -1 : 1;
++            if (a.role != CameraModule.ROLE_TELEPHOTO) return 0;
++            // telephotos by zoom, unknown zoom last
++            return Double.compare(a.zoom > 0 ? a.zoom : Double.MAX_VALUE, b.zoom > 0 ? b.zoom : Double.MAX_VALUE);
++        }
++    };
++
++    private static int indexOf(String[] a, String s, int len) {
++        for (int i = 0; i < len; i++) if (s.equals(a[i])) return i;
++        return -1;
+     }
+ 
+     /** Model codes to offer: main model first, then the variants. */
+@@ -72,12 +155,55 @@ public final class Device {
+         return false;
+     }
+ 
++    /**
++     * The regional model code the user typed, if any: a variant whose compact form equals the whole
++     * query or one of its words ("SCA-LX9", "huawei scalx9" -> "SCA-LX9"). null = use the main model.
++     */
++    public String variantMatching(String query) {
++        if (variants.length == 0 || query == null) return null;
++        String whole = TextNorm.compact(TextNorm.normalize(query));
++        String[] tokens = TextNorm.tokens(query);
++        for (String v : variants) {
++            String cv = TextNorm.compact(TextNorm.normalize(v));
++            if (cv.length() == 0) continue;
++            if (cv.equals(whole)) return v;
++            for (String t : tokens) if (cv.equals(TextNorm.compact(t))) return v;
++        }
++        return null;
++    }
++
+     /** "Apple iPhone 18 Pro Max" style label (brand omitted when the name already starts with it). */
+     public String displayName() {
+-        if (name.toLowerCase(java.util.Locale.ROOT).startsWith(brand.toLowerCase(java.util.Locale.ROOT))) return name;
++        if (name.toLowerCase(Locale.ROOT).startsWith(brand.toLowerCase(Locale.ROOT))) return name;
+         return brand + " " + name;
+     }
+ 
++    // ------------------------------------------------------------------ cameras
++
++    /** The main camera, else the first one; -1 when the phone has no camera data. */
++    public int defaultCameraIndex() {
++        for (int i = 0; i < cameras.size(); i++) {
++            if (cameras.get(i).role == CameraModule.ROLE_MAIN) return i;
++        }
++        return cameras.isEmpty() ? -1 : 0;
++    }
++
++    /** Preference id of camera {@code index}, null when out of range. */
++    public String cameraId(int index) {
++        return index >= 0 && index < cameraIds.length ? cameraIds[index] : null;
++    }
++
++    /** Index of the camera with preference id {@code id}, -1 when there is none. */
++    public int cameraIndex(String id) {
++        if (id == null) return -1;
++        return indexOf(cameraIds, id, cameraIds.length);
++    }
++
++    /** "Ana 200 MP · Geniş 50 MP · Tele 3x 10 MP", "" without camera data. */
++    public String cameraSummary() {
++        return cameraSummary;
++    }
++
+     private static String nn(String s) {
+         return s == null ? "" : s.trim();
+     }
+diff --git a/metakamera-android/src/com/metakamera/app/DeviceDatabase.java b/metakamera-android/src/com/metakamera/app/DeviceDatabase.java
+index c38827f..9b76f8f 100644
+--- a/metakamera-android/src/com/metakamera/app/DeviceDatabase.java
++++ b/metakamera-android/src/com/metakamera/app/DeviceDatabase.java
+@@ -20,16 +20,23 @@ import java.util.Map;
+ import java.util.Set;
+ 
+ /**
+- * The phone database (assets/devices.json):
++ * The phone database (assets/devices.json), version 2 (version 1 files simply have no brand "make",
++ * ICC "copyright" / "p3Description" and device "cameras"):
+  * <pre>
+- * { "version": 1,
+- *   "brands":  [ {"name": "Apple", "icc": {"manufacturer": "APPL", "model": "", "cmm": "appl",
+- *                                          "platform": "APPL", "creator": "appl"}}, ... ],
++ * { "version": 2,
++ *   "brands":  [ {"name": "Apple", "make": "Apple",
++ *                 "icc": {"manufacturer": "APPL", "model": "", "cmm": "appl", "platform": "APPL",
++ *                         "creator": "appl", "copyright": "Copyright Apple Inc., 2022",
++ *                         "p3Description": "Display P3"}}, ... ],
+  *   "devices": [ {"brand": "Apple", "name": "iPhone 18 Pro Max", "year": 2026, "make": "Apple",
+  *                 "model": "iPhone 18 Pro Max", "variants": [], "software": "26.0", "lensMake": "Apple",
+- *                 "lensModel": "...", "hostComputer": "iPhone 18 Pro Max"}, ... ] }
++ *                 "lensModel": "...", "hostComputer": "iPhone 18 Pro Max",
++ *                 "cameras": [ {"role": "telephoto", "zoom": 4, "mp": 48, "f35": 100, "fmm": 16.891,
++ *                               "fn": 2.8, "lens": "...", "out": [[4032, 3024], [8064, 6048]]}, ... ]},
++ *                ... ] }
+  * </pre>
+- * Invalid entries are skipped instead of failing the whole database.
++ * "out"[0] is the camera's default output size. Invalid entries (and invalid camera fields) are skipped
++ * instead of failing the whole database. Parsing needs nothing from Android besides org.json.
+  */
+ public final class DeviceDatabase {
+ 
+@@ -88,8 +95,9 @@ public final class DeviceDatabase {
+                 String name = str(b, "name");
+                 if (name == null || name.trim().length() == 0) continue;
+                 JSONObject icc = b.optJSONObject("icc");
+-                BrandInfo info = new BrandInfo(name, str(icc, "manufacturer"), str(icc, "model"), str(icc, "cmm"),
+-                        str(icc, "platform"), str(icc, "creator"));
++                BrandInfo info = new BrandInfo(name, str(b, "make"), str(icc, "manufacturer"), str(icc, "model"),
++                        str(icc, "cmm"), str(icc, "platform"), str(icc, "creator"), str(icc, "copyright"),
++                        str(icc, "p3Description"));
+                 brands.put(info.name.toLowerCase(Locale.ROOT), info);
+             }
+         }
+@@ -118,7 +126,8 @@ public final class DeviceDatabase {
+                     variants = vs.toArray(new String[vs.size()]);
+                 }
+                 Device d = new Device(brand, name, o.optInt("year", 0), make, model, variants,
+-                        str(o, "software"), str(o, "lensMake"), str(o, "lensModel"), str(o, "hostComputer"));
++                        str(o, "software"), str(o, "lensMake"), str(o, "lensModel"), str(o, "hostComputer"),
++                        cameras(o.optJSONArray("cameras")));
+                 if (!keys.add(d.key)) continue;
+                 list.add(d);
+             }
+@@ -162,22 +171,101 @@ public final class DeviceDatabase {
+     }
+ 
+     /**
+-     * Devices matching every word of {@code query} (brand, name, make, model, variants, year;
+-     * case/diacritics-insensitive) and, when {@code brand} is non-null, that brand. Keeps the sort order.
++     * Devices matching every word of {@code query} (brand, name, make, model, variants, year, camera
++     * megapixels / zoom; see {@link TextNorm}) and, when {@code brand} is non-null, that brand. Keeps the
++     * sort order (grouped by brand).
+      */
+     public List<Device> filter(String query, String brand) {
+         String[] tokens = TextNorm.tokens(query);
+         List<Device> out = new ArrayList<Device>();
+         for (Device d : devices) {
+             if (brand != null && !brand.equalsIgnoreCase(d.brand)) continue;
+-            if (tokens.length > 0 && !TextNorm.matchesAll(d.searchText, tokens)) continue;
++            if (tokens.length > 0 && !TextNorm.matchesAll(d.searchText, d.searchCompact, d.searchUnits, tokens)) {
++                continue;
++            }
+             out.add(d);
+         }
+         return out;
+     }
+ 
++    /**
++     * Ranked quick search, at most {@code limit} results: exact name/model matches first, then names or
++     * model codes starting with the query, then the other matches; newest phones first within each group.
++     * Thread-safe (the database is immutable), so it may run on a filter thread.
++     */
++    public List<Device> search(String query, int limit) {
++        String[] tokens = TextNorm.tokens(query);
++        List<Device> out = new ArrayList<Device>();
++        if (tokens.length == 0 || limit <= 0) return out;
++        String q = TextNorm.normalizeQuery(query);
++        String cq = TextNorm.compact(q);
++        final Map<Device, Integer> tiers = new HashMap<Device, Integer>();
++        for (Device d : devices) {
++            if (!TextNorm.matchesAll(d.searchText, d.searchCompact, d.searchUnits, tokens)) continue;
++            tiers.put(d, rankTier(d, q, cq));
++            out.add(d);
++        }
++        Collections.sort(out, new Comparator<Device>() {
++            @Override
++            public int compare(Device a, Device b) {
++                int ta = tiers.get(a);
++                int tb = tiers.get(b);
++                if (ta != tb) return ta < tb ? -1 : 1;
++                if (a.year != b.year) return a.year > b.year ? -1 : 1;
++                return ORDER.compare(a, b);
++            }
++        });
++        return out.size() > limit ? new ArrayList<Device>(out.subList(0, limit)) : out;
++    }
++
++    /** 0 = exact name/model match, 1 = a name or model code starts with the query, 2 = other match. */
++    static int rankTier(Device d, String q, String cq) {
++        int tier = 2;
++        for (int i = 0; i < d.rankKeys.length; i++) {
++            String k = d.rankKeys[i];
++            String ck = d.rankCompacts[i];
++            if (k.equals(q) || (cq.length() > 0 && ck.equals(cq))) return 0;
++            if (k.startsWith(q) || (cq.length() > 0 && ck.startsWith(cq))) tier = 1;
++        }
++        return tier;
++    }
++
+     // ------------------------------------------------------------------ helpers
+ 
++    /** Parses a "cameras" array; missing, null or invalid fields become "unknown". Never null. */
++    static List<CameraModule> cameras(JSONArray ca) {
++        List<CameraModule> out = new ArrayList<CameraModule>();
++        if (ca == null) return out;
++        for (int i = 0; i < ca.length(); i++) {
++            JSONObject c = ca.optJSONObject(i);
++            if (c == null) continue;
++            List<int[]> outs = new ArrayList<int[]>();
++            JSONArray oa = c.optJSONArray("out");
++            if (oa != null) {
++                for (int j = 0; j < oa.length(); j++) {
++                    JSONArray wh = oa.optJSONArray(j);
++                    if (wh == null || wh.length() < 2) continue;
++                    long w = Math.round(num(wh.optDouble(0)));
++                    long h = Math.round(num(wh.optDouble(1)));
++                    if (w > 0 && h > 0 && w <= Integer.MAX_VALUE && h <= Integer.MAX_VALUE) {
++                        outs.add(new int[]{(int) w, (int) h});
++                    }
++                }
++            }
++            double f35 = num(c.optDouble("f35"));
++            CameraModule m = new CameraModule(str(c, "role"), num(c.optDouble("zoom")), num(c.optDouble("mp")),
++                    f35 > 0 && f35 < 10000 ? (int) Math.round(f35) : 0, num(c.optDouble("fmm")),
++                    num(c.optDouble("fn")), str(c, "lens"), outs.toArray(new int[outs.size()][]));
++            if (m.hasData()) out.add(m);
++        }
++        return out;
++    }
++
++    /** NaN / infinite (absent, null or non-numeric JSON values) -> 0 = unknown. */
++    private static double num(double v) {
++        return Double.isNaN(v) || Double.isInfinite(v) ? 0 : v;
++    }
++
+     /** null when the object is null, the key is absent or JSON null; otherwise the string value. */
+     private static String str(JSONObject o, String key) {
+         if (o == null || !o.has(key) || o.isNull(key)) return null;
+diff --git a/metakamera-android/src/com/metakamera/app/DevicePickerDialog.java b/metakamera-android/src/com/metakamera/app/DevicePickerDialog.java
+index 832f7fc..ade5979 100644
+--- a/metakamera-android/src/com/metakamera/app/DevicePickerDialog.java
++++ b/metakamera-android/src/com/metakamera/app/DevicePickerDialog.java
+@@ -28,8 +28,9 @@ import java.util.ArrayList;
+ import java.util.List;
+ 
+ /**
+- * "Telefon Seç" dialog: search box, brand filter, list grouped by brand (newest first) and an optional
+- * "Model kodu" choice for phones with regional model codes.
++ * "Telefon Seç" dialog: search box, brand filter, list grouped by brand (newest first, each row with a
++ * camera summary such as "Ana 200 MP · Geniş 50 MP · Tele 3x 10 MP") and an optional "Model kodu"
++ * choice for phones with regional model codes.
+  */
+ final class DevicePickerDialog extends Dialog {
+ 
+@@ -136,7 +137,8 @@ final class DevicePickerDialog extends Dialog {
+                     Device d = (Device) row;
+                     if (d != selected) {
+                         selected = d;
+-                        selectedVariant = null;
++                        // a regional model code typed into the search box is preselected
++                        selectedVariant = d.variantMatching(search.getText().toString());
+                     }
+                     adapter.notifyDataSetChanged();
+                     bindVariants();
+@@ -334,6 +336,10 @@ final class DevicePickerDialog extends Dialog {
+                 detail += " · " + getContext().getString(R.string.picker_variants_count, d.variants.length + 1);
+             }
+             ((TextView) v.findViewById(R.id.row_detail)).setText(detail);
++            TextView cams = (TextView) v.findViewById(R.id.row_cameras);
++            String summary = d.cameraSummary();
++            cams.setText(summary);
++            UiUtil.setVisible(cams, summary.length() > 0);
+             TextView year = (TextView) v.findViewById(R.id.row_year);
+             year.setText(d.year > 0 ? String.valueOf(d.year) : "");
+             UiUtil.setVisible(year, d.year > 0);
+diff --git a/metakamera-android/src/com/metakamera/app/DeviceSearchAdapter.java b/metakamera-android/src/com/metakamera/app/DeviceSearchAdapter.java
+new file mode 100644
+index 0000000..0dd6e83
+--- /dev/null
++++ b/metakamera-android/src/com/metakamera/app/DeviceSearchAdapter.java
+@@ -0,0 +1,120 @@
++package com.metakamera.app;
++
++import android.content.Context;
++import android.view.LayoutInflater;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.BaseAdapter;
++import android.widget.Filter;
++import android.widget.Filterable;
++import android.widget.TextView;
++
++import java.util.Collections;
++import java.util.List;
++
++/**
++ * Suggestions of the main-screen quick phone search (an AutoCompleteTextView): at most
++ * {@link #MAX_RESULTS} ranked matches from {@link DeviceDatabase#search}, two-line rows
++ * ("Samsung Galaxy S25 Ultra" + year / "samsung · SM-S938B · Ana 200 MP · Geniş 50 MP ...").
++ *
++ * Filtering runs on the Filter's own background thread; the database is immutable and published through
++ * a volatile field, the result list is only touched on the main thread (publishResults / getView).
++ */
++final class DeviceSearchAdapter extends BaseAdapter implements Filterable {
++
++    static final int MAX_RESULTS = 12;
++
++    private final LayoutInflater inflater;
++    private volatile DeviceDatabase db;
++    private List<Device> results = Collections.emptyList();
++    private String resultQuery = "";
++
++    DeviceSearchAdapter(Context context) {
++        this.inflater = LayoutInflater.from(context);
++    }
++
++    void setDatabase(DeviceDatabase database) {
++        db = database;
++    }
++
++    /** The query the current suggestions belong to (used to pick a typed regional model code). */
++    String resultQuery() {
++        return resultQuery;
++    }
++
++    @Override
++    public int getCount() {
++        return results.size();
++    }
++
++    @Override
++    public Object getItem(int position) {
++        return position >= 0 && position < results.size() ? results.get(position) : null;
++    }
++
++    @Override
++    public long getItemId(int position) {
++        return position;
++    }
++
++    @Override
++    public View getView(int position, View convertView, ViewGroup parent) {
++        View v = convertView != null ? convertView : inflater.inflate(R.layout.row_search, parent, false);
++        Object o = getItem(position);
++        if (!(o instanceof Device)) return v;
++        Device d = (Device) o;
++        ((TextView) v.findViewById(R.id.search_title)).setText(d.displayName());
++        TextView year = (TextView) v.findViewById(R.id.search_year);
++        year.setText(d.year > 0 ? String.valueOf(d.year) : "");
++        UiUtil.setVisible(year, d.year > 0);
++        String variant = d.variantMatching(resultQuery);
++        StringBuilder detail = new StringBuilder(d.make).append(CameraText.SEP)
++                .append(variant != null ? variant : d.model);
++        String cams = d.cameraSummary();
++        if (cams.length() > 0) detail.append(CameraText.SEP).append(cams);
++        ((TextView) v.findViewById(R.id.search_detail)).setText(detail);
++        return v;
++    }
++
++    @Override
++    public Filter getFilter() {
++        return filter;
++    }
++
++    private static final class Result {
++        final String query;
++        final List<Device> devices;
++
++        Result(String query, List<Device> devices) {
++            this.query = query;
++            this.devices = devices;
++        }
++    }
++
++    private final Filter filter = new Filter() {
++        @Override
++        protected FilterResults performFiltering(CharSequence constraint) {
++            String q = constraint == null ? "" : constraint.toString();
++            DeviceDatabase d = db;
++            List<Device> list = d == null ? Collections.<Device>emptyList() : d.search(q, MAX_RESULTS);
++            FilterResults r = new FilterResults();
++            r.values = new Result(q, list);
++            r.count = list.size();
++            return r;
++        }
++
++        @Override
++        protected void publishResults(CharSequence constraint, FilterResults r) {
++            Result res = r != null && r.values instanceof Result ? (Result) r.values : null;
++            results = res == null ? Collections.<Device>emptyList() : res.devices;
++            resultQuery = res == null ? "" : res.query;
++            if (results.isEmpty()) notifyDataSetInvalidated();
++            else notifyDataSetChanged();
++        }
++
++        @Override
++        public CharSequence convertResultToString(Object resultValue) {
++            return resultValue instanceof Device ? ((Device) resultValue).displayName() : "";
++        }
++    };
++}
+diff --git a/metakamera-android/src/com/metakamera/app/EditOptions.java b/metakamera-android/src/com/metakamera/app/EditOptions.java
+index 4acdfc1..fd34cd2 100644
+--- a/metakamera-android/src/com/metakamera/app/EditOptions.java
++++ b/metakamera-android/src/com/metakamera/app/EditOptions.java
+@@ -15,8 +15,12 @@ public final class EditOptions {
+ 
+     /** Rewrite the device identity inside embedded ICC profiles. */
+     public boolean icc = true;
+-    /** Set LensMake/LensModel from the target device. */
++    /** Set LensMake/LensModel from the target device (LensModel of the chosen camera when known). */
+     public boolean lens = true;
++    /** Write the chosen camera's focal length, f-number, 35 mm equivalent and lens specification. */
++    public boolean optics = true;
++    /** Write EXIF PixelX/YDimension from the chosen camera's output size (photos only). */
++    public boolean exifSize = true;
+     /** Set Software from the target device. */
+     public boolean software = true;
+     /** Remove MakerNote and serial numbers that reveal the original brand. */
+@@ -36,6 +40,8 @@ public final class EditOptions {
+         EditOptions o = new EditOptions();
+         o.icc = icc;
+         o.lens = lens;
++        o.optics = optics;
++        o.exifSize = exifSize;
+         o.software = software;
+         o.traces = traces;
+         o.xmp = xmp;
+diff --git a/metakamera-android/src/com/metakamera/app/ItemRow.java b/metakamera-android/src/com/metakamera/app/ItemRow.java
+index eab2f70..01be29e 100644
+--- a/metakamera-android/src/com/metakamera/app/ItemRow.java
++++ b/metakamera-android/src/com/metakamera/app/ItemRow.java
+@@ -274,6 +274,13 @@ final class ItemRow {
+                 for (String s : r.warnings) sb.append("\n• ").append(s);
+             }
+             if (it.outputInspectError != null) sb.append("\n\n").append(it.outputInspectError);
++            if (it.info != null && it.outputInfo != null) {
++                String cam = cameraChanges(c, it.info, it.outputInfo);
++                if (cam.length() > 0) {
++                    if (sb.length() > 0) sb.append("\n\n");
++                    sb.append(c.getString(R.string.item_camera_changes)).append(cam);
++                }
++            }
+             if (it.info != null) {
+                 sb.append("\n\n— Önce —\n");
+                 appendInfo(c, sb, it.info);
+@@ -296,6 +303,10 @@ final class ItemRow {
+         line(sb, "HostComputer", i.hostComputer);
+         line(sb, "LensMake", i.lensMake);
+         line(sb, "LensModel", i.lensModel);
++        line(sb, "Odak uzaklığı", focal(i));
++        line(sb, "Diyafram", aperture(i));
++        line(sb, "35 mm eşdeğeri", focal35(i));
++        line(sb, "EXIF çözünürlüğü", exifSize(i));
+         line(sb, "Çekim tarihi", i.dateTimeOriginal == null ? null
+                 : i.dateTimeOriginal + (i.offsetTimeOriginal != null ? " " + i.offsetTimeOriginal : ""));
+         if (i.hasIcc) {
+@@ -308,11 +319,47 @@ final class ItemRow {
+         }
+         line(sb, "MakerNote", i.hasMakerNote ? "var" : null);
+         line(sb, "XMP", i.hasXmp ? "var" : null);
+-        if (i.width > 0 && i.height > 0) line(sb, "Boyut", i.width + " × " + i.height);
++        if (i.width > 0 && i.height > 0) line(sb, "Gerçek piksel boyutu", CameraText.size(i.width, i.height));
+         if (sb.length() == start) sb.append(c.getString(R.string.item_no_device));
+         else if (sb.charAt(sb.length() - 1) == '\n') sb.setLength(sb.length() - 1);
+     }
+ 
++    /** "• Odak uzaklığı: 5,1 mm → 6,77 mm" lines for the optics / EXIF size values either file has. */
++    private static String cameraChanges(Context c, MediaInfo before, MediaInfo after) {
++        StringBuilder sb = new StringBuilder();
++        change(c, sb, "Odak uzaklığı", focal(before), focal(after));
++        change(c, sb, "Diyafram", aperture(before), aperture(after));
++        change(c, sb, "35 mm eşdeğeri", focal35(before), focal35(after));
++        change(c, sb, "EXIF çözünürlüğü", exifSize(before), exifSize(after));
++        return sb.toString();
++    }
++
++    private static void change(Context c, StringBuilder sb, String key, String before, String after) {
++        if (before == null && after == null) return;
++        sb.append("\n• ").append(key).append(": ");
++        if (before != null && before.equals(after)) {
++            sb.append(after).append(" (").append(c.getString(R.string.item_unchanged)).append(')');
++        } else {
++            sb.append(before != null ? before : "—").append(" → ").append(after != null ? after : "—");
++        }
++    }
++
++    private static String focal(MediaInfo i) {
++        return i.focalLengthMm > 0 ? CameraText.mm(i.focalLengthMm) : null;
++    }
++
++    private static String aperture(MediaInfo i) {
++        return i.fNumber > 0 ? CameraText.fNumber(i.fNumber) : null;
++    }
++
++    private static String focal35(MediaInfo i) {
++        return i.focalLength35mm > 0 ? i.focalLength35mm + " mm" : null;
++    }
++
++    private static String exifSize(MediaInfo i) {
++        return i.exifImageWidth > 0 && i.exifImageHeight > 0 ? CameraText.size(i.exifImageWidth, i.exifImageHeight) : null;
++    }
++
+     private static void line(StringBuilder sb, String key, String value) {
+         if (value == null || value.trim().length() == 0) return;
+         sb.append(key).append(": ").append(value.trim()).append('\n');
+diff --git a/metakamera-android/src/com/metakamera/app/MainActivity.java b/metakamera-android/src/com/metakamera/app/MainActivity.java
+index fdf104a..aa171a8 100644
+--- a/metakamera-android/src/com/metakamera/app/MainActivity.java
++++ b/metakamera-android/src/com/metakamera/app/MainActivity.java
+@@ -16,11 +16,15 @@ import android.text.Editable;
+ import android.text.InputFilter;
+ import android.text.Spanned;
+ import android.text.TextWatcher;
++import android.view.KeyEvent;
+ import android.view.LayoutInflater;
+ import android.view.View;
+ import android.view.WindowManager;
++import android.view.inputmethod.EditorInfo;
++import android.view.inputmethod.InputMethodManager;
+ import android.widget.AdapterView;
+ import android.widget.ArrayAdapter;
++import android.widget.AutoCompleteTextView;
+ import android.widget.Button;
+ import android.widget.CheckBox;
+ import android.widget.CompoundButton;
+@@ -51,6 +55,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+     private static final String S_PENDING_PICK = "pending_pick";
+     private static final String S_PENDING_SAVE = "pending_save";
+     private static final String S_PICKER = "picker";
++    private static final String S_SEARCH = "device_search";
+ 
+     private static final int[] ADV_FIELD_IDS = {R.id.adv_make, R.id.adv_model, R.id.adv_software, R.id.adv_lens_make,
+             R.id.adv_lens_model, R.id.adv_host, R.id.adv_icc_mfr, R.id.adv_icc_model};
+@@ -75,8 +80,16 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+     private TextView deviceName;
+     private TextView deviceDetail;
+     private Button btnPickDevice;
++    private AutoCompleteTextView deviceSearch;
++    private DeviceSearchAdapter searchAdapter;
++    private View cameraSection;
++    private Spinner cameraSpinner;
++    private View resolutionRow;
++    private Spinner resolutionSpinner;
+     private CheckBox optIcc;
+     private CheckBox optLens;
++    private CheckBox optOptics;
++    private CheckBox optExifSize;
+     private CheckBox optSoftware;
+     private CheckBox optTraces;
+     private CheckBox optXmp;
+@@ -109,6 +122,10 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+     private String messageMime;
+     private boolean keepScreenOn;
+     private long lastLaunchAt;
++    /** Device whose cameras fill cameraSpinner (adapters are rebuilt only when it changes). */
++    private Device boundCameraDevice;
++    /** Camera whose output sizes fill resolutionSpinner. */
++    private CameraModule boundResCamera;
+ 
+     private final Runnable hideMessage = new Runnable() {
+         @Override
+@@ -130,6 +147,17 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+         setupListeners();
+         setupAdvancedFields();
+         setupAlbumSpinner();
++        setupDeviceSearch();
++        setupCameraSpinners();
++        if (Build.VERSION.SDK_INT < 28) {
++            // Android 8.x focuses the first focusable-in-touch-mode view at start-up (the search field,
++            // scrolling the screen to it); give that focus to an invisible view at the top instead.
++            View sink = findViewById(R.id.focus_sink);
++            if (sink != null) {
++                sink.setFocusable(true);
++                sink.setFocusableInTouchMode(true);
++            }
++        }
+         UiUtil.applyInsetsPadding(root);
+         View column = findViewById(R.id.content_column); // single-column layout only
+         if (column != null) {
+@@ -140,6 +168,9 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+             pendingPick = savedInstanceState.getInt(S_PENDING_PICK, 0);
+             pendingSaveIds = savedInstanceState.getLongArray(S_PENDING_SAVE);
+             pendingPickerState = savedInstanceState.getBundle(S_PICKER);
++            String q = savedInstanceState.getString(S_SEARCH);
++            // restore the typed query without filtering (no suggestion popup on rotation)
++            if (q != null && q.length() > 0) deviceSearch.setText(q, false);
+         }
+         state.ensureDatabase();
+     }
+@@ -168,6 +199,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+         if (pendingSaveIds != null) out.putLongArray(S_PENDING_SAVE, pendingSaveIds);
+         if (picker != null && picker.isShowing()) out.putBundle(S_PICKER, picker.saveState());
+         else if (pendingPickerState != null) out.putBundle(S_PICKER, pendingPickerState);
++        out.putString(S_SEARCH, deviceSearch.getText().toString());
+     }
+ 
+     /**
+@@ -216,8 +248,15 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+         deviceName = (TextView) findViewById(R.id.device_name);
+         deviceDetail = (TextView) findViewById(R.id.device_detail);
+         btnPickDevice = (Button) findViewById(R.id.btn_pick_device);
++        deviceSearch = (AutoCompleteTextView) findViewById(R.id.device_search);
++        cameraSection = findViewById(R.id.camera_section);
++        cameraSpinner = (Spinner) findViewById(R.id.camera_spinner);
++        resolutionRow = findViewById(R.id.resolution_row);
++        resolutionSpinner = (Spinner) findViewById(R.id.resolution_spinner);
+         optIcc = (CheckBox) findViewById(R.id.opt_icc);
+         optLens = (CheckBox) findViewById(R.id.opt_lens);
++        optOptics = (CheckBox) findViewById(R.id.opt_optics);
++        optExifSize = (CheckBox) findViewById(R.id.opt_exif_size);
+         optSoftware = (CheckBox) findViewById(R.id.opt_software);
+         optTraces = (CheckBox) findViewById(R.id.opt_traces);
+         optXmp = (CheckBox) findViewById(R.id.opt_xmp);
+@@ -317,6 +356,8 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+                 int id = b.getId();
+                 if (id == R.id.opt_icc) o.icc = checked;
+                 else if (id == R.id.opt_lens) o.lens = checked;
++                else if (id == R.id.opt_optics) o.optics = checked;
++                else if (id == R.id.opt_exif_size) o.exifSize = checked;
+                 else if (id == R.id.opt_software) o.software = checked;
+                 else if (id == R.id.opt_traces) o.traces = checked;
+                 else if (id == R.id.opt_xmp) o.xmp = checked;
+@@ -325,7 +366,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+                 bindIccDependents();
+             }
+         };
+-        CheckBox[] boxes = {optIcc, optLens, optSoftware, optTraces, optXmp, optDescTags};
++        CheckBox[] boxes = {optIcc, optLens, optOptics, optExifSize, optSoftware, optTraces, optXmp, optDescTags};
+         for (CheckBox cb : boxes) {
+             cb.setSaveEnabled(false);
+             cb.setOnCheckedChangeListener(optListener);
+@@ -389,6 +430,101 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+         });
+     }
+ 
++    /** Quick phone search above the current choice (same result as choosing in the "Telefon Seç" dialog). */
++    private void setupDeviceSearch() {
++        searchAdapter = new DeviceSearchAdapter(this);
++        deviceSearch.setAdapter(searchAdapter);
++        deviceSearch.setThreshold(1);
++        // the query is saved/restored by hand (setText(q, false)) so a rotation never pops the list up
++        deviceSearch.setSaveEnabled(false);
++        deviceSearch.setOnItemClickListener(new AdapterView.OnItemClickListener() {
++            @Override
++            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
++                Object o = searchAdapter.getItem(position);
++                if (o instanceof Device) chooseFromSearch((Device) o);
++            }
++        });
++        deviceSearch.setOnEditorActionListener(new TextView.OnEditorActionListener() {
++            @Override
++            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
++                boolean enter = event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER
++                        && event.getAction() == KeyEvent.ACTION_DOWN;
++                if (actionId != EditorInfo.IME_ACTION_SEARCH && actionId != EditorInfo.IME_ACTION_DONE && !enter) {
++                    return false;
++                }
++                // "Ara" picks the best suggestion when the list on screen belongs to the typed text
++                String typed = deviceSearch.getText().toString();
++                if (deviceSearch.isPopupShowing() && searchAdapter.getCount() > 0
++                        && TextNorm.normalizeQuery(typed).equals(TextNorm.normalizeQuery(searchAdapter.resultQuery()))) {
++                    Object o = searchAdapter.getItem(0);
++                    if (o instanceof Device) {
++                        chooseFromSearch((Device) o);
++                        return true;
++                    }
++                }
++                hideKeyboard(deviceSearch);
++                return true;
++            }
++        });
++    }
++
++    private void chooseFromSearch(Device d) {
++        if (state.jobRunning || state.db == null) return;
++        // a typed regional model code ("SM-S938U", "scalx9") selects that code instead of the main model
++        String variant = d.variantMatching(searchAdapter.resultQuery());
++        state.setDevice(d, variant);
++        deviceSearch.setText("", false);
++        deviceSearch.dismissDropDown();
++        hideKeyboard(deviceSearch);
++        // API 28+ does not move focus elsewhere in touch mode; older versions would jump to the top view
++        if (Build.VERSION.SDK_INT >= 28 && deviceSearch.isInTouchMode()) deviceSearch.clearFocus();
++        deviceName.announceForAccessibility(getString(R.string.device_search_chosen, d.displayName()));
++    }
++
++    private void hideKeyboard(View v) {
++        try {
++            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
++            if (imm != null) imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
++        } catch (RuntimeException ignored) {
++            // cosmetic
++        }
++    }
++
++    private void setupCameraSpinners() {
++        cameraSpinner.setSaveEnabled(false);
++        resolutionSpinner.setSaveEnabled(false);
++        // Spinner reports selections asynchronously (also after programmatic setSelection / setAdapter),
++        // so the listeners only act when the position differs from AppState and belongs to the bound data.
++        cameraSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
++            @Override
++            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
++                if (boundCameraDevice == null || boundCameraDevice != state.device) return;
++                if (position != state.cameraIndex) state.setCamera(position);
++            }
++
++            @Override
++            public void onNothingSelected(AdapterView<?> parent) {
++            }
++        });
++        resolutionSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
++            @Override
++            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
++                if (boundResCamera == null || boundResCamera != state.camera()) return;
++                if (position != state.outputIndex) state.setOutput(position);
++            }
++
++            @Override
++            public void onNothingSelected(AdapterView<?> parent) {
++            }
++        });
++    }
++
++    private ArrayAdapter<String> spinnerAdapter(List<String> labels) {
++        ArrayAdapter<String> a = new ArrayAdapter<String>(this, R.layout.spinner_item, android.R.id.text1, labels);
++        a.setDropDownViewResource(R.layout.spinner_dropdown_item);
++        return a;
++    }
++
+     // ------------------------------------------------------------------ AppState.Listener
+ 
+     @Override
+@@ -502,6 +638,48 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+             UiUtil.setText(deviceDetail, detail);
+             UiUtil.setVisible(deviceDetail, true);
+         }
++        searchAdapter.setDatabase(state.db);
++        bindCamera();
++    }
++
++    /** Camera and resolution spinners of the chosen phone (hidden when it has no camera data). */
++    private void bindCamera() {
++        Device d = state.device;
++        boolean has = d != null && !d.cameras.isEmpty();
++        UiUtil.setVisible(cameraSection, has);
++        if (!has) {
++            boundCameraDevice = null;
++            boundResCamera = null;
++            return;
++        }
++        if (boundCameraDevice != d) {
++            List<String> labels = new ArrayList<String>();
++            for (CameraModule c : d.cameras) labels.add(CameraText.cameraLabel(c));
++            cameraSpinner.setAdapter(spinnerAdapter(labels));
++            boundCameraDevice = d;
++        }
++        int ci = state.cameraIndex;
++        if (ci >= 0 && ci < d.cameras.size() && cameraSpinner.getSelectedItemPosition() != ci) {
++            cameraSpinner.setSelection(ci, false);
++        }
++
++        CameraModule cam = state.camera();
++        boolean hasOut = cam != null && cam.outputCount() > 0;
++        UiUtil.setVisible(resolutionRow, hasOut);
++        if (!hasOut) {
++            boundResCamera = null;
++            return;
++        }
++        if (boundResCamera != cam) {
++            List<String> labels = new ArrayList<String>();
++            for (int i = 0; i < cam.outputCount(); i++) labels.add(CameraText.outputLabel(cam, i));
++            resolutionSpinner.setAdapter(spinnerAdapter(labels));
++            boundResCamera = cam;
++        }
++        int oi = state.outputIndex;
++        if (oi >= 0 && oi < cam.outputCount() && resolutionSpinner.getSelectedItemPosition() != oi) {
++            resolutionSpinner.setSelection(oi, false);
++        }
+     }
+ 
+     private void bindOptions() {
+@@ -510,6 +688,8 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+             EditOptions o = state.options;
+             optIcc.setChecked(o.icc);
+             optLens.setChecked(o.lens);
++            optOptics.setChecked(o.optics);
++            optExifSize.setChecked(o.exifSize);
+             optSoftware.setChecked(o.software);
+             optTraces.setChecked(o.traces);
+             optXmp.setChecked(o.xmp);
+@@ -551,7 +731,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+         try {
+             for (int f = 0; f < EditOptions.FIELD_COUNT; f++) {
+                 String ov = state.options.overrides[f];
+-                String v = ov != null ? ov : SpecBuilder.defaultValue(f, d, b, state.variant);
++                String v = ov != null ? ov : SpecBuilder.defaultValue(f, d, b, state.variant, state.camera());
+                 EditText e = advFields[f];
+                 if (!v.contentEquals(e.getText())) e.setText(v);
+                 if (f == EditOptions.F_ICC_MFR || f == EditOptions.F_ICC_MODEL) {
+@@ -565,7 +745,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+     }
+ 
+     private void onAdvancedEdited(int field, String text) {
+-        String def = SpecBuilder.defaultValue(field, state.device, state.brandInfo(), state.variant);
++        String def = SpecBuilder.defaultValue(field, state.device, state.brandInfo(), state.variant, state.camera());
+         state.options.overrides[field] = text.equals(def) ? null : text;
+         bindAdvancedLabels();
+     }
+@@ -585,6 +765,11 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
+         UiUtil.setEnabled(btnPickFiles, !busy);
+         UiUtil.setEnabled(btnClear, !busy && has);
+         UiUtil.setEnabled(btnPickDevice, !state.jobRunning && state.db != null);
++        boolean deviceEditable = !state.jobRunning && state.db != null;
++        UiUtil.setEnabled(deviceSearch, deviceEditable);
++        if (!deviceEditable && deviceSearch.isPopupShowing()) deviceSearch.dismissDropDown();
++        UiUtil.setEnabled(cameraSpinner, !state.jobRunning);
++        UiUtil.setEnabled(resolutionSpinner, !state.jobRunning);
+         UiUtil.setEnabled(btnProcess, !busy && has && state.device != null);
+         UiUtil.setText(btnProcess, getString(state.jobRunning ? R.string.processing : R.string.process));
+         UiUtil.setEnabled(btnSaveAll, !busy && state.countUnsavedDone() > 0);
+diff --git a/metakamera-android/src/com/metakamera/app/Prefs.java b/metakamera-android/src/com/metakamera/app/Prefs.java
+index c915877..961c064 100644
+--- a/metakamera-android/src/com/metakamera/app/Prefs.java
++++ b/metakamera-android/src/com/metakamera/app/Prefs.java
+@@ -14,6 +14,12 @@ final class Prefs {
+     private static final String K_VARIANT = "variant";
+     private static final String K_ICC = "opt_icc";
+     private static final String K_LENS = "opt_lens";
++    private static final String K_OPTICS = "opt_optics";
++    private static final String K_EXIF_SIZE = "opt_exif_size";
++    /** Per device: "cam:" + device key -> camera id (Device.cameraId). */
++    private static final String K_CAMERA_PREFIX = "cam:";
++    /** Per device and camera: "out:" + device key + '#' + camera id -> output key ("8064x6048"). */
++    private static final String K_OUTPUT_PREFIX = "out:";
+     private static final String K_SOFTWARE = "opt_software";
+     private static final String K_TRACES = "opt_traces";
+     private static final String K_XMP = "opt_xmp";
+@@ -40,9 +46,32 @@ final class Prefs {
+         sp.edit().putString(K_DEVICE, key).putString(K_VARIANT, variant).apply();
+     }
+ 
++    /** Remembered camera of a phone (Device.cameraId), null = its default camera. */
++    String cameraId(String deviceKey) {
++        return deviceKey == null ? null : sp.getString(K_CAMERA_PREFIX + deviceKey, null);
++    }
++
++    void setCameraId(String deviceKey, String cameraId) {
++        if (deviceKey == null) return;
++        sp.edit().putString(K_CAMERA_PREFIX + deviceKey, cameraId).apply();
++    }
++
++    /** Remembered output size of a phone's camera (CameraModule.outputKey), null = the camera's default. */
++    String outputKey(String deviceKey, String cameraId) {
++        if (deviceKey == null || cameraId == null) return null;
++        return sp.getString(K_OUTPUT_PREFIX + deviceKey + "#" + cameraId, null);
++    }
++
++    void setOutputKey(String deviceKey, String cameraId, String outputKey) {
++        if (deviceKey == null || cameraId == null) return;
++        sp.edit().putString(K_OUTPUT_PREFIX + deviceKey + "#" + cameraId, outputKey).apply();
++    }
++
+     void loadOptions(EditOptions o) {
+         o.icc = sp.getBoolean(K_ICC, true);
+         o.lens = sp.getBoolean(K_LENS, true);
++        o.optics = sp.getBoolean(K_OPTICS, true);
++        o.exifSize = sp.getBoolean(K_EXIF_SIZE, true);
+         o.software = sp.getBoolean(K_SOFTWARE, true);
+         o.traces = sp.getBoolean(K_TRACES, true);
+         o.xmp = sp.getBoolean(K_XMP, true);
+@@ -50,7 +79,8 @@ final class Prefs {
+     }
+ 
+     void saveOptions(EditOptions o) {
+-        sp.edit().putBoolean(K_ICC, o.icc).putBoolean(K_LENS, o.lens).putBoolean(K_SOFTWARE, o.software)
++        sp.edit().putBoolean(K_ICC, o.icc).putBoolean(K_LENS, o.lens).putBoolean(K_OPTICS, o.optics)
++                .putBoolean(K_EXIF_SIZE, o.exifSize).putBoolean(K_SOFTWARE, o.software)
+                 .putBoolean(K_TRACES, o.traces).putBoolean(K_XMP, o.xmp).putBoolean(K_DESC, o.descTags).apply();
+     }
+ 
+diff --git a/metakamera-android/src/com/metakamera/app/SpecBuilder.java b/metakamera-android/src/com/metakamera/app/SpecBuilder.java
+index 1052439..f45dadd 100644
+--- a/metakamera-android/src/com/metakamera/app/SpecBuilder.java
++++ b/metakamera-android/src/com/metakamera/app/SpecBuilder.java
+@@ -3,15 +3,23 @@ package com.metakamera.app;
+ import com.metakamera.core.EditSpec;
+ import com.metakamera.core.IccIdentity;
+ 
++import java.util.List;
++
+ /**
+- * Pure mapping: chosen device + options -> {@link EditSpec}. No Android dependencies.
++ * Pure mapping: chosen device + camera + options -> {@link EditSpec}. No Android dependencies.
+  *
+  * <pre>
+  * make = device.make, model = selected variant or device.model, hostComputer = device.hostComputer ("" removes)
+  * software = option ? device.software : null           ("" removes)
+- * lensMake/lensModel = option ? device values : null   ("" removes)
++ * lensMake = option ? device.lensMake : null           ("" removes)
++ * lensModel = option ? (camera.lens if non-empty, else device.lensModel) : null
++ * optics option: focalLengthMm / focalLength35mm / fNumber = camera values (null when unknown),
++ *                lensSpecification = [min fmm, max fmm, fn at min fmm, fn at max fmm] over the cameras
++ * EXIF size option (photos only, per item): exifImageWidth/Height = chosen output scaled to the item's
++ *                aspect ratio and orientation (see {@link #exifSize})
+  * removeMakerNote = clearSerials = brand-trace option; editXmp / editIcc = options
+- * icc = brand ICC block (absent -> null = keep) + manufacturerText = make, modelText = model
++ * icc = brand ICC block (absent -> null = keep) + manufacturerText = make, modelText = model,
++ *       copyrightText / p3DescriptionText = brand texts (null = keep)
+  * advanced overrides are applied last; createExifIfMissing = true
+  * </pre>
+  */
+@@ -26,8 +34,15 @@ public final class SpecBuilder {
+         return variant != null && d.hasModel(variant) ? variant : d.model;
+     }
+ 
++    /** LensModel for the device: the chosen camera's own lens name when known, else the phone's ("" = remove). */
++    public static String lensModelFor(Device d, CameraModule cam) {
++        if (d == null) return "";
++        if (cam != null && cam.lens.length() > 0) return cam.lens;
++        return d.lensModel;
++    }
++
+     /** Value shown in an advanced field before the user edits it. Never null. */
+-    public static String defaultValue(int field, Device d, BrandInfo b, String variant) {
++    public static String defaultValue(int field, Device d, BrandInfo b, String variant, CameraModule cam) {
+         if (d == null) return "";
+         switch (field) {
+             case EditOptions.F_MAKE:
+@@ -39,7 +54,7 @@ public final class SpecBuilder {
+             case EditOptions.F_LENS_MAKE:
+                 return d.lensMake;
+             case EditOptions.F_LENS_MODEL:
+-                return d.lensModel;
++                return lensModelFor(d, cam);
+             case EditOptions.F_HOST:
+                 return d.hostComputer;
+             case EditOptions.F_ICC_MFR:
+@@ -58,8 +73,11 @@ public final class SpecBuilder {
+         return false;
+     }
+ 
+-    /** Builds the spec, or returns null when no device is chosen. */
+-    public static EditSpec build(Device d, BrandInfo b, String variant, EditOptions o) {
++    /**
++     * Builds the spec shared by every item (no EXIF pixel size; see {@link Plan#forItem}), or returns
++     * null when no device is chosen. {@code cam} may be null (phone without camera data).
++     */
++    public static EditSpec build(Device d, BrandInfo b, String variant, CameraModule cam, EditOptions o) {
+         if (d == null || o == null) return null;
+         EditSpec s = new EditSpec();
+         s.make = d.make;
+@@ -67,7 +85,13 @@ public final class SpecBuilder {
+         s.hostComputer = d.hostComputer;
+         s.software = o.software ? d.software : null;
+         s.lensMake = o.lens ? d.lensMake : null;
+-        s.lensModel = o.lens ? d.lensModel : null;
++        s.lensModel = o.lens ? lensModelFor(d, cam) : null;
++        if (o.optics && cam != null) {
++            s.focalLengthMm = cam.fmm > 0 ? Double.valueOf(cam.fmm) : null;
++            s.focalLength35mm = cam.f35 > 0 ? Integer.valueOf(cam.f35) : null;
++            s.fNumber = cam.fn > 0 ? Double.valueOf(cam.fn) : null;
++            s.lensSpecification = lensSpecification(d.cameras);
++        }
+         s.removeMakerNote = o.traces;
+         s.clearSerials = o.traces;
+         s.editXmp = o.xmp;
+@@ -82,6 +106,8 @@ public final class SpecBuilder {
+             icc.platformSig = b.iccPlatform;
+             icc.creatorSig = b.iccCreator;
+         }
++        setIccText(icc, "copyrightText", b == null ? null : b.copyright);
++        setIccText(icc, "p3DescriptionText", b == null ? null : b.p3Description);
+ 
+         String[] ov = o.overrides;
+         if (ov[EditOptions.F_MAKE] != null) s.make = ov[EditOptions.F_MAKE].trim();
+@@ -100,6 +126,59 @@ public final class SpecBuilder {
+         return s;
+     }
+ 
++    /**
++     * EXIF LensSpecification over every camera with a known focal length and f-number:
++     * {min fmm, max fmm, fn of the min-fmm camera, fn of the max-fmm camera} (ties: the brighter lens).
++     * null when no camera qualifies.
++     */
++    static double[] lensSpecification(List<CameraModule> cameras) {
++        CameraModule lo = null;
++        CameraModule hi = null;
++        if (cameras == null) return null;
++        for (CameraModule c : cameras) {
++            if (c.fmm <= 0 || c.fn <= 0) continue;
++            if (lo == null || c.fmm < lo.fmm || (c.fmm == lo.fmm && c.fn < lo.fn)) lo = c;
++            if (hi == null || c.fmm > hi.fmm || (c.fmm == hi.fmm && c.fn < hi.fn)) hi = c;
++        }
++        if (lo == null) return null;
++        return new double[]{lo.fmm, hi.fmm, lo.fn, hi.fn};
++    }
++
++    /**
++     * EXIF PixelX/YDimension for an item whose real raster is {@code w} x {@code h} when the chosen camera
++     * writes {@code W} x {@code H}: the long edge becomes W and the other edge follows the item's own
++     * aspect ratio (rounded to an even number), so orientation and proportions stay plausible. With an
++     * unknown raster size, W x H is used as is. null when the output size is unknown.
++     */
++    public static int[] exifSize(int W, int H, int w, int h) {
++        if (W <= 0 || H <= 0) return null;
++        if (W < H) {
++            int t = W;
++            W = H;
++            H = t;
++        }
++        if (w <= 0 || h <= 0) return new int[]{W, H};
++        if (w >= h) return new int[]{W, even((double) W * h / w)};
++        return new int[]{even((double) W * w / h), W};
++    }
++
++    private static int even(double v) {
++        long r = Math.round(v / 2.0) * 2;
++        return (int) Math.max(2, Math.min(r, 65534));
++    }
++
++    /**
++     * Sets an {@link IccIdentity} text field by name when this core version has it (copyrightText and
++     * p3DescriptionText were added to the core later); a no-op otherwise.
++     */
++    static void setIccText(IccIdentity icc, String field, String value) {
++        try {
++            IccIdentity.class.getField(field).set(icc, value);
++        } catch (Exception ignored) {
++            // older core without this field: nothing to set
++        }
++    }
++
+     /** Printable ASCII only, at most 4 characters, trailing spaces trimmed ("" = zero). */
+     static String signature(String s) {
+         StringBuilder sb = new StringBuilder(4);
+@@ -112,4 +191,51 @@ public final class SpecBuilder {
+         while (end > 0 && r.charAt(end - 1) == ' ') end--;
+         return r.substring(0, end);
+     }
++
++    // ------------------------------------------------------------------ per-job plan
++
++    /**
++     * Everything one editing job needs, captured on the main thread (options are copied) so the worker can
++     * build each item's spec independently: EXIF pixel sizes depend on every item's own raster size.
++     */
++    public static Plan plan(Device d, BrandInfo b, String variant, CameraModule cam, int[] output, EditOptions o) {
++        if (d == null || o == null) return null;
++        return new Plan(d, b, variant, cam, output, o.copy());
++    }
++
++    public static final class Plan {
++        private final Device device;
++        private final BrandInfo brand;
++        private final String variant;
++        private final CameraModule camera;
++        private final int[] output;
++        private final EditOptions options;
++
++        private Plan(Device device, BrandInfo brand, String variant, CameraModule camera, int[] output,
++                     EditOptions options) {
++            this.device = device;
++            this.brand = brand;
++            this.variant = variant;
++            this.camera = camera;
++            this.output = output == null || output.length < 2 ? null : new int[]{output[0], output[1]};
++            this.options = options;
++        }
++
++        /**
++         * A fresh spec for one item. {@code rasterW} x {@code rasterH} is the item's real pixel size
++         * (0 = unknown). Videos never get an EXIF pixel size (their lens model and 35 mm focal length
++         * still apply).
++         */
++        public EditSpec forItem(boolean video, int rasterW, int rasterH) {
++            EditSpec s = build(device, brand, variant, camera, options);
++            if (s != null && !video && options.exifSize && output != null) {
++                int[] xy = exifSize(output[0], output[1], rasterW, rasterH);
++                if (xy != null) {
++                    s.exifImageWidth = xy[0];
++                    s.exifImageHeight = xy[1];
++                }
++            }
++            return s;
++        }
++    }
+ }
+diff --git a/metakamera-android/src/com/metakamera/app/TextNorm.java b/metakamera-android/src/com/metakamera/app/TextNorm.java
+index 753e52b..bada4f0 100644
+--- a/metakamera-android/src/com/metakamera/app/TextNorm.java
++++ b/metakamera-android/src/com/metakamera/app/TextNorm.java
+@@ -4,10 +4,28 @@ import java.text.Normalizer;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Locale;
++import java.util.regex.Pattern;
+ 
+-/** Case- and diacritics-insensitive text matching for the device search (Turkish-safe). */
++/**
++ * Case- and diacritics-insensitive text matching for the device search (Turkish-safe). Pure Java and
++ * thread-safe (the main-screen search filters on a background thread).
++ *
++ * Matching rules (see {@link #matchesAll}):
++ * <ul>
++ *   <li>every query word must occur somewhere (any order): "ultra s25" finds "Galaxy S25 Ultra";</li>
++ *   <li>a word also matches the compact form of the haystack (no spaces, hyphens, underscores, dots or
++ *       other punctuation): "s25ultra", "sms938b", "scalx9", "iphone18promax";</li>
++ *   <li>"200 mp" / "200mp" / "200 megapiksel" become the unit word "200mp", and unit words ("200mp",
++ *       "3x") must match a whole word, so "50mp" does not find a 150 MP camera.</li>
++ * </ul>
++ */
+ final class TextNorm {
+ 
++    /** Number followed by "mp" or "x": camera resolution / zoom words, matched as whole words. */
++    private static final Pattern UNIT = Pattern.compile("[0-9]+(\\.[0-9]+)?(mp|x)");
++    private static final Pattern NUMBER = Pattern.compile("[0-9]+([.,][0-9]+)?");
++    private static final Pattern DECIMAL_COMMA = Pattern.compile("([0-9]),([0-9])");
++
+     private TextNorm() {
+     }
+ 
+@@ -34,21 +52,91 @@ final class TextNorm {
+         return sb.toString().toLowerCase(Locale.ROOT).trim();
+     }
+ 
+-    /** Splits a normalized query into non-empty tokens. */
++    /**
++     * Compact form of an already normalized text: only letters, digits and '+' are kept, so
++     * "sm-s938b" -> "sms938b", "galaxy s25 ultra" -> "galaxys25ultra", "galaxy s25+" -> "galaxys25+".
++     */
++    static String compact(String normalized) {
++        if (normalized == null) return "";
++        StringBuilder sb = new StringBuilder(normalized.length());
++        for (int i = 0; i < normalized.length(); i++) {
++            char c = normalized.charAt(i);
++            if (Character.isLetterOrDigit(c) || c == '+') sb.append(c);
++        }
++        return sb.toString();
++    }
++
++    /** Normalized query with runs of spaces collapsed ("  Galaxy   S25 " -> "galaxy s25"). */
++    static String normalizeQuery(String query) {
++        StringBuilder sb = new StringBuilder();
++        for (String p : normalize(query).split(" ")) {
++            if (p.length() == 0) continue;
++            if (sb.length() > 0) sb.append(' ');
++            sb.append(p);
++        }
++        return sb.toString();
++    }
++
++    /**
++     * Splits a query into normalized words. A number followed by "mp" / "megapiksel" / "megapixel" is
++     * merged into one unit word ("200 mp" -> "200mp"), and a decimal comma inside numbers becomes a dot
++     * ("12,5mp" -> "12.5mp").
++     */
+     static String[] tokens(String query) {
+         String n = normalize(query);
+-        List<String> out = new ArrayList<String>();
++        List<String> raw = new ArrayList<String>();
+         for (String p : n.split(" ")) {
+-            if (p.length() > 0) out.add(p);
++            if (p.length() > 0) raw.add(DECIMAL_COMMA.matcher(p).replaceAll("$1.$2"));
++        }
++        List<String> out = new ArrayList<String>();
++        for (int i = 0; i < raw.size(); i++) {
++            String t = raw.get(i);
++            if (i + 1 < raw.size() && NUMBER.matcher(t).matches() && isMegapixelWord(raw.get(i + 1))) {
++                out.add(t + "mp");
++                i++;
++                continue;
++            }
++            if (t.endsWith("megapiksel") || t.endsWith("megapixel")) {
++                String num = t.substring(0, t.length() - (t.endsWith("megapiksel") ? 10 : 9));
++                if (NUMBER.matcher(num).matches()) t = num + "mp";
++            }
++            out.add(t);
+         }
+         return out.toArray(new String[out.size()]);
+     }
+ 
+-    /** True when every token occurs in the (already normalized) haystack. */
+-    static boolean matchesAll(String normalizedHaystack, String[] tokens) {
++    private static boolean isMegapixelWord(String s) {
++        return s.equals("mp") || s.equals("mpx") || s.equals("megapiksel") || s.equals("megapixel");
++    }
++
++    /** True for camera unit words such as "200mp", "12.5mp", "3x", "0.5x". */
++    static boolean isUnitToken(String token) {
++        return UNIT.matcher(token).matches();
++    }
++
++    /**
++     * True when every token matches.
++     *
++     * @param spacedHaystack  normalized identity text (brand, name, make, model, variants, year) with a
++     *                        space before and after every word
++     * @param compactHaystack {@link #compact} form of the identity text
++     * @param unitHaystack    camera unit words such as " 200mp 50mp 3x ", space-separated; only unit
++     *                        tokens look here, so a plain "10" does not match a "10.8mp" camera
++     */
++    static boolean matchesAll(String spacedHaystack, String compactHaystack, String unitHaystack, String[] tokens) {
+         for (String t : tokens) {
+-            if (normalizedHaystack.indexOf(t) < 0) return false;
++            if (!matches(spacedHaystack, compactHaystack, unitHaystack, t)) return false;
+         }
+         return true;
+     }
++
++    static boolean matches(String spacedHaystack, String compactHaystack, String unitHaystack, String t) {
++        if (isUnitToken(t)) {
++            String w = " " + t + " ";
++            return (unitHaystack != null && unitHaystack.contains(w)) || spacedHaystack.contains(w);
++        }
++        if (spacedHaystack.contains(t)) return true;
++        String c = compact(t);
++        return c.length() > 0 && compactHaystack != null && compactHaystack.contains(c);
++    }
+ }
