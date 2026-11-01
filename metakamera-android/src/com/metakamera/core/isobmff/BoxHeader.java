@@ -77,7 +77,7 @@ public final class BoxHeader {
             toEnd = true;
         }
         if ("uuid".equals(type)) hs += 16;
-        if (size < hs || pos + size > limit) {
+        if (size < hs || size > limit - pos) {
             throw new UnsupportedFormatException("Bozuk kutu boyutu: '" + type + "' @" + pos);
         }
         return new BoxHeader(pos, size, hs, type, large, toEnd);
@@ -101,7 +101,7 @@ public final class BoxHeader {
             toEnd = true;
         }
         if ("uuid".equals(type)) hs += 16;
-        if (size < hs || pos + size > limit) {
+        if (size < hs || size > limit - pos) {
             throw new UnsupportedFormatException("Bozuk kutu boyutu: '" + type + "' @" + pos);
         }
         return new BoxHeader(pos, size, hs, type, large, toEnd);
