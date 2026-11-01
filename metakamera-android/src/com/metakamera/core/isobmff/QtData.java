@@ -91,6 +91,183 @@ final class QtData {
         return item;
     }
 
+    // ------------------------------------------------------------------ numeric 'data' atoms
+
+    /** Well-known QuickTime 'data' types. */
+    static final int TYPE_UTF8 = 1;
+    static final int TYPE_UTF16 = 2;
+    static final int TYPE_BE_SIGNED = 21;
+    static final int TYPE_BE_UNSIGNED = 22;
+    static final int TYPE_FLOAT32 = 23;
+    static final int TYPE_FLOAT64 = 24;
+
+    /** Byte width of a fixed-size integer type (65..67/74 signed, 75..77/78 unsigned), 0 = variable/none. */
+    private static int fixedIntWidth(int type) {
+        switch (type) {
+            case 65:
+            case 75:
+                return 1;
+            case 66:
+            case 76:
+                return 2;
+            case 67:
+            case 77:
+                return 4;
+            case 74:
+            case 78:
+                return 8;
+            default:
+                return 0;
+        }
+    }
+
+    private static boolean isIntType(int type) {
+        return type == TYPE_BE_SIGNED || type == TYPE_BE_UNSIGNED || fixedIntWidth(type) > 0;
+    }
+
+    private static boolean isSignedIntType(int type) {
+        return type == TYPE_BE_SIGNED || (type >= 65 && type <= 67) || type == 74;
+    }
+
+    /** True when {@code v} is representable in {@code width} bytes (signed or unsigned). */
+    private static boolean fits(long v, int width, boolean signed) {
+        if (width >= 8) return signed || v >= 0;
+        long bits = 8L * width;
+        if (signed) return v >= -(1L << (bits - 1)) && v < (1L << (bits - 1));
+        return v >= 0 && v < (1L << bits);
+    }
+
+    /**
+     * Number held by a 'data' payload: big-endian signed (21) / unsigned (22) integer of 1..8 bytes,
+     * the fixed-size integer types, float32/float64 (rounded) or decimal UTF-8/UTF-16 text. Null when
+     * the payload holds no readable number.
+     */
+    static Long decodeDataNumber(byte[] p) {
+        if (p == null || p.length < 8) return null;
+        int type = (int) (ByteUtils.u32be(p, 0) & 0xFFFFFF);
+        int n = p.length - 8;
+        if (isIntType(type)) {
+            int fixed = fixedIntWidth(type);
+            if (n < 1 || n > 8 || (fixed > 0 && n != fixed)) return null;
+            long v = 0;
+            for (int i = 0; i < n; i++) v = (v << 8) | (p[8 + i] & 0xFF);
+            boolean signed = isSignedIntType(type);
+            if (signed && n < 8 && (p[8] & 0x80) != 0) v -= 1L << (8 * n);
+            if (!signed && n == 8 && v < 0) return null;   // beyond Long.MAX_VALUE
+            return Long.valueOf(v);
+        }
+        if (type == TYPE_FLOAT32 || type == TYPE_FLOAT64) {
+            double d;
+            if (type == TYPE_FLOAT32 && n == 4) d = Float.intBitsToFloat((int) ByteUtils.u32be(p, 8));
+            else if (type == TYPE_FLOAT64 && n == 8) d = Double.longBitsToDouble(ByteUtils.u64be(p, 8));
+            else return null;
+            if (Double.isNaN(d) || Double.isInfinite(d) || Math.abs(d) > 1e15) return null;
+            return Long.valueOf(Math.round(d));
+        }
+        if (type == TYPE_UTF8 || type == TYPE_UTF16) {
+            String s = decodeDataPayload(p);
+            if (s == null) return null;
+            s = s.trim();
+            if (s.length() == 0 || s.length() > 18) return null;
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (!(c >= '0' && c <= '9') && !(i == 0 && c == '-' && s.length() > 1)) return null;
+            }
+            return Long.valueOf(Long.parseLong(s));
+        }
+        return null;
+    }
+
+    /**
+     * New 'data' payload holding {@code value}, keeping the old payload's type (and integer width
+     * when the value fits) and locale. Integers that no longer fit, and unknown or missing old
+     * payloads, become a big-endian signed integer (type 21) of 4 bytes (8 when needed), as iPhones
+     * write their numeric keys.
+     */
+    static byte[] encodeDataNumber(byte[] old, long value) {
+        boolean hasOld = old != null && old.length >= 8;
+        int type = hasOld ? (int) (ByteUtils.u32be(old, 0) & 0xFFFFFF) : -1;
+        long locale = hasOld ? ByteUtils.u32be(old, 4) : 0;
+        int n = hasOld ? old.length - 8 : 0;
+        if (type == TYPE_UTF8 || type == TYPE_UTF16) {
+            String s = String.valueOf(value);
+            byte[] v = type == TYPE_UTF16 ? s.getBytes(UTF_16BE) : s.getBytes(ByteUtils.UTF_8);
+            return dataPayload(old, type, locale, v);
+        }
+        if (type == TYPE_FLOAT32 && n == 4) {
+            byte[] v = new byte[4];
+            ByteUtils.put32be(v, 0, Float.floatToIntBits((float) value) & 0xFFFFFFFFL);
+            return dataPayload(old, type, locale, v);
+        }
+        if (type == TYPE_FLOAT64 && n == 8) {
+            byte[] v = new byte[8];
+            ByteUtils.put64be(v, 0, Double.doubleToLongBits((double) value));
+            return dataPayload(old, type, locale, v);
+        }
+        if (isIntType(type)) {
+            int fixed = fixedIntWidth(type);
+            int width = fixed > 0 ? fixed : n;
+            boolean okWidth = width == 1 || width == 2 || width == 3 || width == 4 || width == 8;
+            if (okWidth && fits(value, width, isSignedIntType(type))) {
+                return dataPayload(old, type, locale, intBytes(value, width));
+            }
+        } else {
+            hasOld = false;   // unknown type: a fresh signed integer replaces it
+        }
+        int width = fits(value, 4, true) ? 4 : 8;
+        return dataPayload(hasOld ? old : null, TYPE_BE_SIGNED, locale, intBytes(value, width));
+    }
+
+    private static byte[] intBytes(long v, int width) {
+        byte[] b = new byte[width];
+        for (int i = width - 1; i >= 0; i--) {
+            b[i] = (byte) v;
+            v >>= 8;
+        }
+        return b;
+    }
+
+    /** [type indicator (old high byte kept)][locale][value]. */
+    private static byte[] dataPayload(byte[] old, int type, long locale, byte[] value) {
+        byte[] p = new byte[8 + value.length];
+        ByteUtils.put32be(p, 0, type & 0xFFFFFFL);
+        if (old != null && old.length >= 8) p[0] = old[0];
+        ByteUtils.put32be(p, 4, locale);
+        System.arraycopy(value, 0, p, 8, value.length);
+        return p;
+    }
+
+    /** Number of an ilst item (first 'data' child holding one), null if none. */
+    static Long itemNumber(Mp4Box item) {
+        if (!item.isContainer()) return null;
+        for (Mp4Box d : item.childrenOf(DATA)) {
+            Long v = decodeDataNumber(d.payloadBytes());
+            if (v != null) return v;
+        }
+        return null;
+    }
+
+    /** Replaces the number of every 'data' child of an ilst item (adds one when there is none). */
+    static void setItemNumber(Mp4Box item, long value) {
+        if (!item.isContainer()) {
+            item.setPayload(Mp4Box.newLeaf(DATA, encodeDataNumber(null, value)).toBytes());
+            return;
+        }
+        List<Mp4Box> datas = item.childrenOf(DATA);
+        if (datas.isEmpty()) {
+            item.addChild(Mp4Box.newLeaf(DATA, encodeDataNumber(null, value)));
+            return;
+        }
+        for (Mp4Box d : datas) d.setPayload(encodeDataNumber(d.payloadBytes(), value));
+    }
+
+    /** New ilst item box with a single big-endian signed integer 'data' atom. */
+    static Mp4Box newNumberItem(String type, long value) {
+        Mp4Box item = Mp4Box.newContainer(type, null);
+        item.children.add(Mp4Box.newLeaf(DATA, encodeDataNumber(null, value)));
+        return item;
+    }
+
     // ------------------------------------------------------------------ user-data text atoms
 
     /** True when a user-data atom payload holds an iTunes-style 'data' atom instead of QuickTime text. */

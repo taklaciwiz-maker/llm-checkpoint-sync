@@ -25,7 +25,8 @@ import java.util.Locale;
  *       com.android.manufacturer / model / version (Huawei Gallery, Immich), vendor keys
  *       (com.oplus.product.model, com.honor.lens.model, ...) and other keys ending in
  *       ".make"/".manufacturer"/".model" — see {@link Mp4BrandPolicy}. 'mdta' metas inside
- *       moov/udta (ffmpeg style) and moov/trak (track level, iPhone lens model) are updated too.</li>
+ *       moov/udta (ffmpeg style) and moov/trak (track level, iPhone lens model and 35 mm equivalent
+ *       focal length) are updated too.</li>
  *   <li>QuickTime user data text atoms moov/udta '©mak' / '©mod' / '©swr', iTunes-style
  *       udta/meta('mdir')/ilst items, Samsung udta/smta/'mdln' and 3GPP udta/'auth' naming the
  *       original device.</li>
@@ -559,6 +560,7 @@ public final class Mp4Editor {
             if (m.videoTrakKeys == k) m.videoTrakKeys = null;
         }
         createTrackLens(m, policy, report);
+        createFocal35(m, policy, report);
 
         // ---- iTunes-style ilst items
         for (Mp4Box meta : m.itunesMetas) editItunes(meta, values, report);
@@ -583,7 +585,7 @@ public final class Mp4Editor {
      */
     private static void editKeys(QtKeysMeta k, Mp4BrandPolicy policy, String where, boolean primary,
                                  EditReport report) {
-        boolean[] present = new boolean[Mp4BrandPolicy.PROTECTED + 1];
+        boolean[] present = new boolean[Mp4BrandPolicy.KIND_COUNT];
         List<Integer> removals = new ArrayList<Integer>();
         for (int i = 1; i <= k.count(); i++) {
             String name = k.name(i);
@@ -591,8 +593,19 @@ public final class Mp4Editor {
             present[kind] = true;
             String target = policy.target(kind);
             if (target == null) continue;
-            String old = k.value(i);
+            boolean numeric = Mp4BrandPolicy.isNumericKind(kind);
+            String old = numeric ? numberText(k, i) : k.value(i);
             String field = Mp4BrandPolicy.field(kind);
+            if (numeric && target.length() > 0) {
+                long v = Long.parseLong(target);
+                Long cur = k.number(i);
+                if (cur == null || cur.longValue() != v) {
+                    k.setNumber(i, v);
+                    report.change("Video " + field + " (" + keyLabel(kind, where, name) + "): " + show(old) + " → "
+                            + target);
+                }
+                continue;
+            }
             if (target.length() == 0) {
                 removals.add(i);
                 if (kind == Mp4BrandPolicy.ANDROID_VERSION) {
@@ -630,6 +643,12 @@ public final class Mp4Editor {
         return std ? where : where + ": " + name;
     }
 
+    /** Decimal text of a numeric key's value, null when unreadable. */
+    private static String numberText(QtKeysMeta k, int index) {
+        Long v = k.number(index);
+        return v == null ? null : String.valueOf(v);
+    }
+
     /** 1-based index of the first key of this kind, or 0. */
     private static int findKind(QtKeysMeta k, int kind) {
         for (int i = 1; i <= k.count(); i++) {
@@ -659,6 +678,46 @@ public final class Mp4Editor {
         k.add(Mp4BrandPolicy.KEY_APPLE_LENS, lens);
         k.commit();
         report.change("Video LensModel (Keys/trak): " + NONE + " → " + lens);
+    }
+
+    /**
+     * Apple target with a 35 mm equivalent focal length: adds
+     * com.apple.quicktime.camera.focal_length.35mm_equivalent (signed integer, type 21) to the key
+     * table that holds the lens_model key — the video track for iPhone files or a freshly created
+     * lens key — when no key table has one. Without a lens_model key nothing is created.
+     */
+    private static void createFocal35(Moov m, Mp4BrandPolicy policy, EditReport report) {
+        Integer f = policy.createFocal35();
+        if (f == null) return;
+        for (QtKeysMeta k : m.allKeys()) {
+            if (findKind(k, Mp4BrandPolicy.APPLE_FOCAL35) > 0) return;
+        }
+        QtKeysMeta host = null;
+        String where = null;
+        List<QtKeysMeta> trak = new ArrayList<QtKeysMeta>();
+        if (m.videoTrakKeys != null) trak.add(m.videoTrakKeys);
+        trak.addAll(m.trakKeys);
+        for (QtKeysMeta k : trak) {
+            if (host == null && findKind(k, Mp4BrandPolicy.APPLE_LENS) > 0) {
+                host = k;
+                where = "Keys/trak";
+            }
+        }
+        if (host == null && m.keys != null && findKind(m.keys, Mp4BrandPolicy.APPLE_LENS) > 0) {
+            host = m.keys;
+            where = "Keys";
+        }
+        for (QtKeysMeta k : m.udtaKeys) {
+            if (host == null && findKind(k, Mp4BrandPolicy.APPLE_LENS) > 0) {
+                host = k;
+                where = "Keys/udta";
+            }
+        }
+        if (host == null) return;
+        host.addNumber(Mp4BrandPolicy.KEY_APPLE_FOCAL35, f.intValue());
+        host.commit();
+        report.change("Video " + Mp4BrandPolicy.field(Mp4BrandPolicy.APPLE_FOCAL35) + " (" + where + "): " + NONE
+                + " → " + f);
     }
 
     /** Samsung moov/udta/smta/'mdln' (model code, exiftool "SamsungModel"). */
@@ -896,6 +955,11 @@ public final class Mp4Editor {
         lensMetas.addAll(keyMetas);
         for (QtKeysMeta k : lensMetas) {
             if (info.lensModel == null) info.lensModel = keyValue(k, Mp4BrandPolicy.APPLE_LENS);
+            if (info.focalLength35mm == 0) {
+                int fi = findKind(k, Mp4BrandPolicy.APPLE_FOCAL35);
+                Long f = fi > 0 ? k.number(fi) : null;
+                if (f != null && f.longValue() > 0 && f.longValue() <= 100000) info.focalLength35mm = f.intValue();
+            }
         }
         info.gpsStatus = !location ? "yok" : (locationZero ? "maskelenmiş" : "var");
     }

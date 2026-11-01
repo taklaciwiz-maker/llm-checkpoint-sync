@@ -183,6 +183,15 @@ final class QtKeysMeta {
         return null;
     }
 
+    /** Numeric value of the key at 1-based index (integer, float or decimal text item), null if none. */
+    Long number(int index) {
+        for (Mp4Box it : items(index)) {
+            Long v = QtData.itemNumber(it);
+            if (v != null) return v;
+        }
+        return null;
+    }
+
     // ------------------------------------------------------------------ edits
 
     void setValue(int index, String value) {
@@ -195,17 +204,39 @@ final class QtKeysMeta {
         for (Mp4Box it : its) QtData.setItemValue(it, value);
     }
 
+    /** Sets a numeric value, keeping each 'data' atom's type (and integer width when it fits). */
+    void setNumber(int index, long value) {
+        ensureKeysAndIlst();
+        List<Mp4Box> its = items(index);
+        if (its.isEmpty()) {
+            ilst.addChild(QtData.newNumberItem(Mp4Box.typeFromInt(index), value));
+            return;
+        }
+        for (Mp4Box it : its) QtData.setItemNumber(it, value);
+    }
+
     /** Appends a key ('mdta' namespace) with a value; returns its 1-based index. */
     int add(String name, String value) {
+        int idx = addKey(name);
+        setValue(idx, value);
+        return idx;
+    }
+
+    /** Appends a key ('mdta' namespace) with a big-endian signed integer value; returns its 1-based index. */
+    int addNumber(String name, long value) {
+        int idx = addKey(name);
+        setNumber(idx, value);
+        return idx;
+    }
+
+    private int addKey(String name) {
         ensureKeysAndIlst();
         namespaces.add(MDTA.getBytes(ByteUtils.ISO_8859_1));
         byte[] raw = name.getBytes(ByteUtils.UTF_8);
         rawNames.add(raw);
         names.add(name);
         keysDirty = true;
-        int idx = names.size();
-        setValue(idx, value);
-        return idx;
+        return names.size();
     }
 
     /** Removes the key at 1-based index, its items, and renumbers the items of later keys. */

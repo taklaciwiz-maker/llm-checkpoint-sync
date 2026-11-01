@@ -27,6 +27,23 @@ public final class IccIdentity {
     /** Add dmnd/dmdd tags when the profile has none (default: only replace existing ones). */
     public boolean addDescTagsIfMissing;
 
+    /**
+     * Text for the profile copyright ('cprt') tag, e.g. "Copyright Apple Inc., 2022". Phone vendors
+     * name themselves here (Huawei: "Huawei Device Co., Ltd. 2020", Samsung: "Copyright (c) 2022
+     * Samsung Electronics Co., Ltd.", Xiaomi: "Copyright Xiaomi Communications Co., Ltd. 2022"), even
+     * when every header device field is zero. Replaces the text of an existing 'cprt' tag keeping its
+     * tag type (desc/text/mluc). The tag is never created and never removed: null and "" both keep it.
+     */
+    public String copyrightText;
+    /**
+     * Profile description ('desc') for P3-gamut display profiles, e.g. "Display P3" (Apple) or
+     * "DCI-P3 D65 Gamut with sRGB Transfer" (Samsung). Applied only when the current description
+     * mentions "P3" (case-insensitive), e.g. Huawei/Xiaomi "sRGB EOTF with DCI-P3 Color Gamut";
+     * other descriptions (sRGB IEC61966-2.1, ...) are never touched. The tag type is kept; the tag
+     * is never created or removed: null and "" both keep it.
+     */
+    public String p3DescriptionText;
+
     public IccIdentity copy() {
         IccIdentity c = new IccIdentity();
         c.manufacturerSig = manufacturerSig;
@@ -37,6 +54,8 @@ public final class IccIdentity {
         c.manufacturerText = manufacturerText;
         c.modelText = modelText;
         c.addDescTagsIfMissing = addDescTagsIfMissing;
+        c.copyrightText = copyrightText;
+        c.p3DescriptionText = p3DescriptionText;
         return c;
     }
 }

@@ -27,6 +27,10 @@ import java.util.Locale;
  * other *.make / *.manufacturer / *.model  spec value (never created; lens keys are excluded)
  * com.apple.quicktime.camera.lens_model    spec.lensModel; null + removeMakerNote + non-Apple target: remove;
  *                                          created in the first video track only for an Apple target
+ * com.apple.quicktime.camera.              spec.focalLength35mm (signed BE int, data type 21; existing value
+ *   focal_length.35mm_equivalent           types/widths kept); null + removeMakerNote + non-Apple target:
+ *                                          remove; created only for an Apple target, in the key table that
+ *                                          holds (or just got) the lens_model key
  * Samsung udta/smta/'mdln'                 removeMakerNote ? remove : spec.model
  * 3GPP udta/'auth' naming the old device   removeMakerNote ? remove : spec.model
  * Keys containing movingphoto / com.openharmony.*: never touched
@@ -38,6 +42,7 @@ final class Mp4BrandPolicy {
     static final String KEY_APPLE_MODEL = "com.apple.quicktime.model";
     static final String KEY_APPLE_SOFTWARE = "com.apple.quicktime.software";
     static final String KEY_APPLE_LENS = "com.apple.quicktime.camera.lens_model";
+    static final String KEY_APPLE_FOCAL35 = "com.apple.quicktime.camera.focal_length.35mm_equivalent";
     static final String KEY_ANDROID_MAKE = "com.android.manufacturer";
     static final String KEY_ANDROID_MODEL = "com.android.model";
     static final String KEY_ANDROID_VERSION = "com.android.version";
@@ -65,11 +70,17 @@ final class Mp4BrandPolicy {
     static final int GENERIC_MODEL = 11;
     static final int APPLE_LENS = 12;
     static final int PROTECTED = 13;
+    /** com.apple.quicktime.camera.focal_length.35mm_equivalent (numeric value). */
+    static final int APPLE_FOCAL35 = 14;
+    /** Number of kinds (array size for per-kind flags). */
+    static final int KIND_COUNT = 15;
 
     final String make;
     final String model;
     final String software;
     final String lensModel;
+    /** 35 mm equivalent focal length to write, null = keep (non-positive spec values count as null). */
+    final Integer focal35;
     /** The user's "remove original-brand traces" option ({@link EditSpec#removeMakerNote}). */
     final boolean removeTraces;
     final boolean appleTarget;
@@ -79,6 +90,7 @@ final class Mp4BrandPolicy {
         model = spec.model;
         software = spec.software;
         lensModel = spec.lensModel;
+        focal35 = spec.focalLength35mm != null && spec.focalLength35mm.intValue() > 0 ? spec.focalLength35mm : null;
         removeTraces = spec.removeMakerNote;
         appleTarget = isAppleTarget(spec);
     }
@@ -101,6 +113,7 @@ final class Mp4BrandPolicy {
         if (n.equals(KEY_APPLE_MODEL)) return STD_MODEL;
         if (n.equals(KEY_APPLE_SOFTWARE)) return STD_SOFTWARE;
         if (n.equals(KEY_APPLE_LENS)) return APPLE_LENS;
+        if (n.equals(KEY_APPLE_FOCAL35)) return APPLE_FOCAL35;
         if (n.equals(KEY_ANDROID_MAKE)) return ANDROID_MAKE;
         if (n.equals(KEY_ANDROID_MODEL)) return ANDROID_MODEL;
         if (n.equals(KEY_ANDROID_VERSION)) return ANDROID_VERSION;
@@ -140,7 +153,13 @@ final class Mp4BrandPolicy {
         if (isModelKind(kind)) return "Model";
         if (kind == STD_SOFTWARE) return "Software";
         if (kind == APPLE_LENS || kind == VENDOR_LENS) return "LensModel";
+        if (kind == APPLE_FOCAL35) return "FocalLengthIn35mmFormat";
         return "Anahtar";
+    }
+
+    /** True for kinds whose value is a number (read/written with the numeric 'data' types). */
+    static boolean isNumericKind(int kind) {
+        return kind == APPLE_FOCAL35;
     }
 
     // ------------------------------------------------------------------ decisions
@@ -175,6 +194,10 @@ final class Mp4BrandPolicy {
             case APPLE_LENS:
                 if (lensModel != null) return lensModel;
                 return removeTraces && !appleTarget ? "" : null;
+            case APPLE_FOCAL35:
+                // decimal text of the new value (see isNumericKind)
+                if (focal35 != null) return String.valueOf(focal35);
+                return removeTraces && !appleTarget ? "" : null;
             default:
                 return null;
         }
@@ -199,6 +222,8 @@ final class Mp4BrandPolicy {
                 return removeTraces && !"".equals(lensModel);
             case APPLE_LENS:
                 return lensModel == null;
+            case APPLE_FOCAL35:
+                return focal35 == null;
             default:
                 return false;
         }
@@ -228,6 +253,14 @@ final class Mp4BrandPolicy {
         return appleTarget ? nonEmpty(lensModel) : null;
     }
 
+    /**
+     * 35 mm equivalent focal length to create next to the lens_model key (wherever that key is or was
+     * just created) when no focal-length key exists, or null. Apple targets only, like the lens key.
+     */
+    Integer createFocal35() {
+        return appleTarget ? focal35 : null;
+    }
+
     /** Key name created for a kind. */
     static String keyName(int kind) {
         switch (kind) {
@@ -243,6 +276,8 @@ final class Mp4BrandPolicy {
                 return KEY_ANDROID_MODEL;
             case APPLE_LENS:
                 return KEY_APPLE_LENS;
+            case APPLE_FOCAL35:
+                return KEY_APPLE_FOCAL35;
             default:
                 return null;
         }

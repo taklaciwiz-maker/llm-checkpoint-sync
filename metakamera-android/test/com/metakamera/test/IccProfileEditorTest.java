@@ -533,11 +533,472 @@ public final class IccProfileEditorTest {
         T.check(Arrays.equals(md5Id(out2), Arrays.copyOfRange(out2, 84, 100)), "v2 MD5 recomputed");
     }
 
+    // ================================================================== copyright ('cprt') and P3 description ('desc')
+
+    private static final String APPLE_CPRT = "Copyright Apple Inc., 2022";
+    private static final String HUAWEI_CPRT = "Huawei Device Co., Ltd. 2020";
+    private static final String VENDOR_P3 = "sRGB EOTF with DCI-P3 Color Gamut";
+    private static final String SAMSUNG_CPRT = "Copyright (c) 2022 Samsung Electronics Co., Ltd.";
+    private static final String SAMSUNG_P3 = "DCI-P3 D65 Gamut with sRGB Transfer";
+
+    /** Apple identity plus the copyright and P3 description iPhone profiles carry. */
+    private static IccIdentity appleWithTexts() {
+        IccIdentity id = T.appleSpec().icc;
+        id.copyrightText = APPLE_CPRT;
+        id.p3DescriptionText = "Display P3";
+        return id;
+    }
+
+    /** Samsung identity (Galaxy S24/S25 profiles: header CMM/platform/creator zero, manufacturer "SEC"). */
+    private static IccIdentity samsungWithTexts() {
+        IccIdentity id = new IccIdentity();
+        id.manufacturerSig = "SEC";
+        id.modelSig = "";
+        id.cmmSig = "";
+        id.platformSig = "";
+        id.creatorSig = "";
+        id.copyrightText = SAMSUNG_CPRT;
+        id.p3DescriptionText = SAMSUNG_P3;
+        return id;
+    }
+
+    /**
+     * Huawei-like v4 profile (header device fields all zero, vendor only in 'cprt', vendor P3 name in
+     * 'desc', valid MD5 ID) to Apple: both texts replaced as single en-US 'mluc' records, every
+     * other tag byte-identical, MD5 recomputed, lcms transforms unchanged.
+     */
+    public static void testHuaweiV4CopyrightAndP3Description() throws Exception {
+        byte[] in = huaweiLikeProfile(true);
+        T.check(Arrays.equals(md5Id(in), Arrays.copyOfRange(in, 84, 100)), "fixture ID valid");
+        T.check(isZero(in, 4, 4) && isZero(in, 40, 4) && isZero(in, 48, 8) && isZero(in, 80, 4), "fixture header zero");
+        File inF = writeTmp("huawei-v4-in.icc", in);
+        Map<String, String> m0 = T.exif(inF, "-n");
+        T.eq(HUAWEI_CPRT, m0.get("ICC_Profile:ProfileCopyright"), "fixture cprt");
+        T.eq(VENDOR_P3, m0.get("ICC_Profile:ProfileDescription"), "fixture desc");
+
+        IccIdentity id = appleWithTexts();
+        EditReport r = new EditReport();
+        byte[] out = IccProfileEditor.edit(in, id, r);
+        T.check(r.warnings.isEmpty(), "warnings " + r.warnings);
+        T.check(r.changes.contains("ICC telif metni: " + HUAWEI_CPRT + " → " + APPLE_CPRT), "report " + r.changes);
+        T.check(r.changes.contains("ICC profil açıklaması: " + VENDOR_P3 + " → Display P3"), "report " + r.changes);
+        T.check(r.changes.contains("ICC üretici: (boş) → APPL"), "report " + r.changes);
+        T.check(r.changes.contains("ICC profil kimliği (MD5) yeniden hesaplandı"), "report " + r.changes);
+        verifyStructure(in, out, "huawei v4", true, ALL_TEXT);
+        List<Tag> to = tags(out);
+        T.check(find(to, "dmnd") == null && find(to, "dmdd") == null, "dmnd/dmdd never created");
+        checkMluc(out, find(to, "cprt"), APPLE_CPRT, "cprt");
+        checkMluc(out, find(to, "desc"), "Display P3", "desc");
+        T.check(Arrays.equals(md5Id(out), Arrays.copyOfRange(out, 84, 100)), "recomputed MD5 valid");
+
+        File o = writeTmp("huawei-v4-out.icc", out);
+        pythonMd5Check(o);
+        Map<String, String> m = T.exif(o, "-n");
+        T.eq(APPLE_CPRT, m.get("ICC_Profile:ProfileCopyright"), "exiftool cprt");
+        T.eq("Display P3", m.get("ICC_Profile:ProfileDescription"), "exiftool desc");
+        T.eq("APPL", m.get("ICC-header:DeviceManufacturer"), "exiftool mfr");
+        T.eq(hex(Arrays.copyOfRange(out, 84, 100)), T.exif(o).get("ICC-header:ProfileID"), "exiftool ProfileID");
+        MediaInfo info = new MediaInfo();
+        IccProfileEditor.inspect(out, info);
+        T.eq("Display P3", info.iccDescription, "inspect desc");
+        checkNoNewValidateWarnings(List.of(inF), List.of(o));
+        T.check(checkLcmsEquivalent(List.of(inF), List.of(o), null, null, Map.of(o.getName(), "Display P3"),
+                Map.of(o.getName(), APPLE_CPRT)) != 0, "lcms transform");
+        EditReport r2 = new EditReport();
+        T.check(IccProfileEditor.edit(out, id, r2) == out, "idempotent " + r2);
+        T.check(r2.changes.isEmpty() && r2.warnings.isEmpty(), "idempotent report " + r2);
+
+        // copyright alone: 'desc' stays byte-identical, only the size/ID header fields change
+        IccIdentity onlyCprt = new IccIdentity();
+        onlyCprt.copyrightText = APPLE_CPRT;
+        EditReport r3 = new EditReport();
+        byte[] out3 = IccProfileEditor.edit(in, onlyCprt, r3);
+        verifyStructure(in, out3, "cprt only", true, new String[]{"cprt"});
+        T.eq(2, r3.changes.size(), "cprt + MD5 reported: " + r3.changes);
+        for (int i = 4; i < 84; i++) T.eq(in[i], out3[i], "header byte " + i);
+        T.check(Arrays.equals(md5Id(out3), Arrays.copyOfRange(out3, 84, 100)), "MD5 after cprt only");
+
+        // P3 description alone, Samsung wording (the 'cprt' bytes stay identical)
+        IccIdentity onlyDesc = new IccIdentity();
+        onlyDesc.p3DescriptionText = SAMSUNG_P3;
+        byte[] out4 = IccProfileEditor.edit(in, onlyDesc, new EditReport());
+        verifyStructure(in, out4, "desc only", true, new String[]{"desc"});
+        checkMluc(out4, find(tags(out4), "desc"), SAMSUNG_P3, "samsung desc");
+    }
+
+    /** v2 tag types are kept: 'desc' (textDescriptionType) and 'text' (textType); non-ASCII handling. */
+    public static void testCopyrightAndP3DescriptionKeepTagTypes() throws Exception {
+        byte[] in = v2Profile("HUAWEI", "ELS-NX9", true);    // desc 'desc' "Huawei P3 Profile", cprt 'text'
+        IccIdentity id = new IccIdentity();
+        id.copyrightText = APPLE_CPRT;
+        id.p3DescriptionText = "Display P3";
+        EditReport r = new EditReport();
+        byte[] out = IccProfileEditor.edit(in, id, r);
+        T.check(r.warnings.isEmpty(), "warnings " + r.warnings);
+        T.check(r.changes.contains("ICC telif metni: Copyright Huawei → " + APPLE_CPRT), "report " + r.changes);
+        T.check(r.changes.contains("ICC profil açıklaması: Huawei P3 Profile → Display P3"), "report " + r.changes);
+        verifyStructure(in, out, "v2 texts", true, new String[]{"cprt", "desc"});   // dmnd/dmdd untouched
+        List<Tag> to = tags(out);
+        T.eq(APPLE_CPRT, textTypeValue(out, find(to, "cprt")), "cprt keeps textType");
+        DescParts d = descParts(out, find(to, "desc"));
+        T.eq("Display P3", d.ascii, "desc ascii");
+        T.eq("Display P3", d.unicode, "desc unicode");
+        T.check(Arrays.equals(md5Id(out), Arrays.copyOfRange(out, 84, 100)), "v2 MD5 recomputed");
+        File inF = writeTmp("v2-cprt-in.icc", in);
+        File o = writeTmp("v2-cprt-out.icc", out);
+        Map<String, String> m = T.exif(o, "-n");
+        T.eq(APPLE_CPRT, m.get("ICC_Profile:ProfileCopyright"), "exiftool cprt");
+        T.eq("Display P3", m.get("ICC_Profile:ProfileDescription"), "exiftool desc");
+        T.eq("HUAWEI", m.get("ICC_Profile:DeviceMfgDesc"), "dmnd kept");
+        checkNoNewValidateWarnings(List.of(inF), List.of(o));
+        T.check(checkLcmsEquivalent(List.of(inF), List.of(o), "HUAWEI", "ELS-NX9", Map.of(o.getName(), "Display P3"),
+                Map.of(o.getName(), APPLE_CPRT)) != 0, "lcms v2");
+        T.check(IccProfileEditor.edit(out, id, new EditReport()) == out, "idempotent v2");
+
+        // v4 Apple profile of 2017 iPhones: 'desc'-type description, 'text' copyright, MD5 ID
+        ProfileBuilder pb = new ProfileBuilder(0x04000000);
+        pb.cmm = "appl";
+        pb.mfr = "APPL";
+        pb.platform = "APPL";
+        pb.creator = "appl";
+        pb.withId = true;
+        pb.tag("desc", desc("Display P3"));
+        pb.tag("cprt", text("Copyright Apple Inc., 2017"));
+        pb.tag("wtpt", xyz(0.9642, 1.0, 0.8249));
+        byte[] apple17 = pb.build();
+        IccIdentity sam = samsungWithTexts();
+        EditReport rs = new EditReport();
+        byte[] outS = IccProfileEditor.edit(apple17, sam, rs);
+        verifyStructure(apple17, outS, "apple 2017", true, ALL_TEXT);
+        T.eq(SAMSUNG_CPRT, textTypeValue(outS, find(tags(outS), "cprt")), "text type kept");
+        T.eq(SAMSUNG_P3, descParts(outS, find(tags(outS), "desc")).unicode, "desc type kept");
+        T.check(rs.changes.contains("ICC profil açıklaması: Display P3 → " + SAMSUNG_P3), "report " + rs.changes);
+        T.check(rs.changes.contains("ICC üretici: APPL → SEC"), "report " + rs.changes);
+        T.check(Arrays.equals(md5Id(outS), Arrays.copyOfRange(outS, 84, 100)), "MD5");
+
+        // 'desc'-type copyright (some v2 writers) with non-ASCII text: ASCII part gets '?', Unicode exact
+        String uni = "Telif © 2025 Şirket Ltd.";
+        ProfileBuilder px = new ProfileBuilder(0x02100000);
+        px.tag("desc", desc("Xiaomi DCI-P3"));
+        px.tag("cprt", desc("Copyright Xiaomi Communications Co., Ltd. 2022"));
+        px.tag("wtpt", xyz(0.9642, 1.0, 0.8249));
+        byte[] xi = px.build();
+        IccIdentity u = new IccIdentity();
+        u.copyrightText = uni;
+        byte[] outX = IccProfileEditor.edit(xi, u, new EditReport());
+        DescParts c = descParts(outX, find(tags(outX), "cprt"));
+        T.eq(ascii(uni), c.ascii, "desc-type cprt ascii");
+        T.eq(uni, c.unicode, "desc-type cprt unicode");
+        byte[] outT = IccProfileEditor.edit(in, u, new EditReport());
+        T.eq(ascii(uni), textTypeValue(outT, find(tags(outT), "cprt")), "textType: 7-bit ASCII");
+        byte[] outM = IccProfileEditor.edit(huaweiLikeProfile(false), u, new EditReport());
+        checkMluc(outM, find(tags(outM), "cprt"), uni, "mluc unicode");
+        T.check(isZero(outM, 84, 16), "zero ID stays zero");
+    }
+
+    /** 'desc' only changes for P3 profiles; "" / null never remove; 'cprt' is never created; odd cases. */
+    public static void testP3DescriptionOnlyForP3ProfilesAndNeverCreated() throws Exception {
+        byte[] srgb = skiaLikeProfile();
+        IccIdentity id = new IccIdentity();
+        id.p3DescriptionText = "Display P3";
+        EditReport r = new EditReport();
+        T.check(IccProfileEditor.edit(srgb, id, r) == srgb, "sRGB description untouched");
+        T.check(r.changes.isEmpty() && r.warnings.isEmpty(), "no report " + r);
+        id.copyrightText = APPLE_CPRT;
+        byte[] out = IccProfileEditor.edit(srgb, id, r);
+        verifyStructure(srgb, out, "skia", true, new String[]{"cprt"});    // 'desc' data byte-identical
+        T.check(r.changes.contains("ICC telif metni: Google Inc. 2016 → " + APPLE_CPRT), "report " + r.changes);
+        T.check(!hasChangeStarting(r, "ICC profil açıklaması"), "desc not reported " + r.changes);
+
+        // case-insensitive P3 detection; every record of a multi-locale 'mluc' becomes one en-US record
+        ProfileBuilder pb = new ProfileBuilder(0x04400000);
+        pb.tag("desc", mluc(new String[][]{{"enUS", "Wide gamut (display p3)"}, {"deDE", "Breiter Farbraum"}}));
+        pb.tag("cprt", mluc(new String[][]{{"enUS", "No copyright, use freely"}}));
+        pb.tag("wtpt", xyz(0.9642, 1.0, 0.8249));
+        byte[] lower = pb.build();
+        EditReport rl = new EditReport();
+        byte[] outL = IccProfileEditor.edit(lower, id, rl);
+        checkMluc(outL, find(tags(outL), "desc"), "Display P3", "lowercase p3");
+        T.check(rl.changes.contains("ICC profil açıklaması: Wide gamut (display p3) → Display P3"), "report " + rl.changes);
+        verifyStructure(lower, outL, "lowercase", true, ALL_TEXT);
+
+        // "" and null keep everything: the tags are never removed
+        for (String v : new String[]{"", null}) {
+            IccIdentity keep = new IccIdentity();
+            keep.copyrightText = v;
+            keep.p3DescriptionText = v;
+            EditReport rk = new EditReport();
+            byte[] h = huaweiLikeProfile(true);
+            T.check(IccProfileEditor.edit(h, keep, rk) == h, "keep for <" + v + ">");
+            T.check(rk.changes.isEmpty() && rk.warnings.isEmpty(), "keep report " + rk);
+        }
+
+        // no 'cprt' tag: never created
+        ProfileBuilder nb = new ProfileBuilder(0x04300000);
+        nb.tag("desc", mluc(new String[][]{{"enUS", "sRGB"}}));
+        nb.tag("wtpt", xyz(0.9642, 1.0, 0.8249));
+        byte[] noCprt = nb.build();
+        EditReport rn = new EditReport();
+        T.check(IccProfileEditor.edit(noCprt, appleWithTexts(), rn) != noCprt, "header still edited");
+        T.check(find(tags(IccProfileEditor.edit(noCprt, appleWithTexts(), new EditReport())), "cprt") == null,
+                "cprt never created");
+        T.check(!hasChangeStarting(rn, "ICC telif"), "no cprt report " + rn.changes);
+
+        // 'dmdd' sharing the data of a P3 'desc': the description changes, dmdd keeps its old text
+        byte[] shared = v2Profile("HUAWEI", "@desc", false);
+        IccIdentity p3 = new IccIdentity();
+        p3.p3DescriptionText = "Display P3";
+        byte[] outSh = IccProfileEditor.edit(shared, p3, new EditReport());
+        verifyStructure(shared, outSh, "shared desc", true, new String[]{"desc"});
+        Map<String, String> ms = T.exif(writeTmp("shared-desc.icc", outSh));
+        T.eq("Display P3", ms.get("ICC_Profile:ProfileDescription"), "desc replaced");
+        T.eq("Huawei P3 Profile", ms.get("ICC_Profile:DeviceModelDesc"), "dmdd kept");
+        // and both replaced with the same text share one copy again
+        p3.modelText = "Display P3";
+        byte[] outSh2 = IccProfileEditor.edit(shared, p3, new EditReport());
+        List<Tag> t2 = tags(outSh2);
+        T.eq(find(t2, "desc").off, find(t2, "dmdd").off, "equal new texts share one copy");
+        T.check(outSh2.length < outSh.length, "no duplicated data");
+
+        // unreadable 'cprt' (not a text type): warning, bytes kept, header still edited
+        ProfileBuilder ub = new ProfileBuilder(0x02100000);
+        ub.mfr = "HUAW";
+        ub.tag("desc", desc("Huawei sRGB"));
+        ub.tag("cprt", xyz(0.1, 0.2, 0.3));
+        ub.tag("wtpt", xyz(0.9642, 1.0, 0.8249));
+        byte[] odd = ub.build();
+        IccIdentity a = appleWithTexts();
+        a.manufacturerText = null;
+        a.modelText = null;
+        EditReport ru = new EditReport();
+        byte[] outU = IccProfileEditor.edit(odd, a, ru);
+        T.check(ru.warnings.contains("ICC 'cprt' etiketi okunamadı (tür 'XYZ '); değiştirilmedi"), "warning " + ru.warnings);
+        T.eq(odd.length, outU.length, "nothing rebuilt");
+        for (int i = 100; i < odd.length; i++) T.eq(odd[i], outU[i], "byte " + i);
+        T.eq("APPL", sig(outU, 48), "header edited");
+
+        // irregular tag table: warning names every requested text tag
+        byte[] bad = withU32(huaweiLikeProfile(false), 132 + 4, 0xFFFFFF00L);
+        EditReport rb = new EditReport();
+        IccProfileEditor.edit(bad, appleWithTexts(), rb);
+        T.check(!rb.warnings.isEmpty() && rb.warnings.get(0).contains("dmnd/dmdd/cprt/desc etiketleri değiştirilmedi"),
+                "warning " + rb.warnings);
+    }
+
+    /** Every system profile: readable 'cprt' replaced, 'desc' only when it mentions P3, transforms unchanged. */
+    public static void testSystemProfilesCopyrightAndP3() throws Exception {
+        List<File> profiles = systemProfiles();
+        if (profiles.isEmpty()) return;
+        IccIdentity id = appleWithTexts();
+        id.manufacturerText = null;
+        id.modelText = null;
+        List<File> origs = new ArrayList<File>();
+        List<File> outs = new ArrayList<File>();
+        int n = 0;
+        for (File f : profiles) {
+            byte[] in = T.read(f);
+            EditReport r = new EditReport();
+            byte[] out = IccProfileEditor.edit(in, id, r);
+            T.check(r.warnings.isEmpty(), "warnings " + r.warnings + " for " + f);
+            verifyStructure(in, out, f.getName(), true, new String[]{"cprt", "desc"});
+            checkProfileId(in, out, f.getName());
+            List<Tag> ti = tags(in);
+            List<Tag> to = tags(out);
+            for (String s : new String[]{"cprt", "desc"}) {
+                if (find(ti, s) != null) T.eq(type(in, find(ti, s)), type(out, find(to, s)), s + " type kept " + f);
+            }
+            File o = T.file("cp-" + n + "-" + f.getName());
+            File c = T.file("cp-orig-" + n + "-" + f.getName());
+            T.write(o, out);
+            T.write(c, in);
+            origs.add(c);
+            outs.add(o);
+            n++;
+            EditReport r2 = new EditReport();
+            T.check(IccProfileEditor.edit(out, id, r2) == out, "idempotent " + f + " " + r2);
+        }
+        Map<String, Map<String, String>> ex = exifMany(outs);
+        Map<String, Map<String, String>> exOrig = exifMany(origs);
+        Map<String, String> expDesc = new HashMap<String, String>();
+        Map<String, String> expCprt = new HashMap<String, String>();
+        int cprts = 0;
+        for (int i = 0; i < outs.size(); i++) {
+            String on = outs.get(i).getName();
+            Map<String, String> m = ex.get(on);
+            Map<String, String> mo = exOrig.get(origs.get(i).getName());
+            String oc = mo.get("ICC_Profile:ProfileCopyright");
+            String od = mo.get("ICC_Profile:ProfileDescription");
+            if (oc != null) {
+                cprts++;
+                T.eq(APPLE_CPRT, m.get("ICC_Profile:ProfileCopyright"), "cprt replaced " + on);
+                expCprt.put(on, APPLE_CPRT);
+            } else {
+                T.eq(null, m.get("ICC_Profile:ProfileCopyright"), "cprt never created " + on);
+            }
+            boolean p3 = od != null && od.toUpperCase(java.util.Locale.US).contains("P3");
+            T.eq(p3 ? "Display P3" : od, m.get("ICC_Profile:ProfileDescription"), "desc " + on);
+            if (p3) expDesc.put(on, "Display P3");
+        }
+        if (profiles.size() >= 20) T.check(cprts >= 10, "system profiles with cprt: " + cprts);
+        checkNoNewValidateWarnings(origs, outs);
+        int xf = checkLcmsEquivalent(origs, outs, null, null, expDesc, expCprt);
+        T.check(xf == -1 || xf >= outs.size() / 2, "lcms transforms compared: " + xf + " of " + outs.size());
+        System.out.println("  (" + outs.size() + " profiles: " + cprts + " copyrights, " + expDesc.size()
+                + " P3 descriptions replaced; lcms transforms compared: " + xf + ")");
+    }
+
+    /**
+     * Real phone profiles extracted (exiftool -icc_profile -b) from the sample HEICs: Samsung Galaxy
+     * (v4.3 mluc, zero ID) to Apple and Apple iPhone (v4.0, MD5 ID; 2017 'desc'/'text' types) to
+     * Samsung. Also an end-to-end HEIC edit through {@link com.metakamera.core.MetadataEditor}.
+     * Skipped when the samples directory is missing (CI).
+     */
+    public static void testRealPhoneProfilesFromSamples() throws Exception {
+        File dir = samplesDir();
+        if (dir == null || !T.hasTool("exiftool")) {
+            System.out.println("  (real samples not found, skipped)");
+            return;
+        }
+        List<File> found = new ArrayList<File>();
+        // one exiftool pass over the (read-only) samples: files that embed a profile with a description
+        String list = T.exec("exiftool", "-q", "-q", "-m", "-r", "-ext", "heic", "-ext", "heif", "-ext", "hif",
+                "-ext", "jpg", "-ext", "jpeg", "-p", "$Directory/$FileName\t$ICC_Profile:ProfileDescription",
+                dir.getAbsolutePath()).out;
+        for (String line : list.split("\n")) {
+            int tab = line.indexOf('\t');
+            // (-m prints files without a profile too, with an empty description)
+            if (tab <= 0 || line.substring(tab + 1).trim().isEmpty() || found.size() >= 12) continue;
+            File f = new File(line.substring(0, tab));
+            if (f.isFile()) found.add(f);
+        }
+        if (found.isEmpty()) {
+            System.out.println("  (no sample with an ICC profile, skipped)");
+            return;
+        }
+        List<File> origs = new ArrayList<File>();
+        List<File> outs = new ArrayList<File>();
+        Map<String, String> expDesc = new HashMap<String, String>();
+        Map<String, String> expCprt = new HashMap<String, String>();
+        File appleHeic = null;
+        int k = 0;
+        for (File f : found) {
+            File copy = T.file("real-" + k + "-" + f.getName());
+            T.write(copy, T.read(f));
+            byte[] in = extractIcc(copy);
+            if (in.length < 132) continue;
+            MediaInfo i0 = new MediaInfo();
+            IccProfileEditor.inspect(in, i0);
+            boolean apple = "APPL".equals(i0.iccManufacturer);
+            if (apple && appleHeic == null && copy.getName().toLowerCase().endsWith(".heic")) appleHeic = copy;
+            IccIdentity id = apple ? samsungWithTexts() : appleWithTexts();
+            String newCprt = id.copyrightText;
+            String newDesc = id.p3DescriptionText;
+            List<Tag> ti = tags(in);
+            String oldCprt = textOf(in, find(ti, "cprt"));
+            String oldDesc = i0.iccDescription;
+            EditReport r = new EditReport();
+            byte[] out = IccProfileEditor.edit(in, id, r);
+            String what = f.getName() + " (" + oldDesc + ")";
+            T.check(r.warnings.isEmpty(), "warnings " + r.warnings + " for " + what);
+            verifyStructure(in, out, what, true, ALL_TEXT);
+            checkProfileId(in, out, what);
+            List<Tag> to = tags(out);
+            for (String s : new String[]{"cprt", "desc"}) {
+                T.check(find(ti, s) != null, s + " present in phone profile " + what);
+                T.eq(type(in, find(ti, s)), type(out, find(to, s)), s + " type kept " + what);
+            }
+            if (oldCprt != null) {
+                T.check(r.changes.contains("ICC telif metni: " + oldCprt + " → " + newCprt), "report " + r.changes);
+            }
+            boolean p3 = oldDesc != null && oldDesc.toUpperCase(java.util.Locale.US).contains("P3");
+            T.check(p3, "phone profiles are P3: " + what);
+            T.check(r.changes.contains("ICC profil açıklaması: " + oldDesc + " → " + newDesc), "report " + r.changes);
+            File o = T.file("real-" + k + "-out.icc");
+            File c = T.file("real-" + k + "-orig.icc");
+            T.write(o, out);
+            T.write(c, in);
+            origs.add(c);
+            outs.add(o);
+            expDesc.put(o.getName(), newDesc);
+            expCprt.put(o.getName(), newCprt);
+            T.check(IccProfileEditor.edit(out, id, new EditReport()) == out, "idempotent " + what);
+            k++;
+        }
+        T.check(outs.size() == found.size(), "profiles extracted from every listed sample: " + outs.size() + " of "
+                + found.size());
+        Map<String, Map<String, String>> ex = exifMany(outs);
+        for (File o : outs) {
+            Map<String, String> m = ex.get(o.getName());
+            T.eq(expCprt.get(o.getName()), m.get("ICC_Profile:ProfileCopyright"), "exiftool cprt " + o.getName());
+            T.eq(expDesc.get(o.getName()), m.get("ICC_Profile:ProfileDescription"), "exiftool desc " + o.getName());
+        }
+        checkNoNewValidateWarnings(origs, outs);
+        int xf = checkLcmsEquivalent(origs, outs, null, null, expDesc, expCprt);
+        T.check(xf == -1 || xf == outs.size(), "lcms transforms compared: " + xf + " of " + outs.size());
+        System.out.println("  (" + outs.size() + " real phone profiles, lcms transforms compared: " + xf
+                + ", HEIC end to end: " + (appleHeic != null) + ")");
+
+        // end to end: iPhone HEIC -> Samsung through the facade (colr/prof rewritten)
+        if (appleHeic != null) {
+            com.metakamera.core.EditSpec s = new com.metakamera.core.EditSpec();
+            s.make = "samsung";
+            s.model = "Galaxy S25 Ultra";
+            s.icc = samsungWithTexts();
+            File out = T.file("real-apple-to-samsung.heic");
+            EditReport r = T.edit(appleHeic, out, s);
+            T.check(hasChangeStarting(r, "ICC telif metni: Copyright Apple Inc."), "facade report " + r.changes);
+            Map<String, String> m = T.exif(out, "-n");
+            T.eq(SAMSUNG_CPRT, m.get("ICC_Profile:ProfileCopyright"), "HEIC cprt");
+            T.eq(SAMSUNG_P3, m.get("ICC_Profile:ProfileDescription"), "HEIC desc");
+            T.eq("SEC", m.get("ICC-header:DeviceManufacturer").trim(), "HEIC mfr");
+            byte[] icc = extractIcc(out);
+            T.check(Arrays.equals(md5Id(icc), Arrays.copyOfRange(icc, 84, 100)), "HEIC profile MD5 valid");
+            T.eq(SAMSUNG_P3, T.inspect(out).iccDescription, "facade inspect desc");
+        }
+    }
+
+    /** End to end through the facade: a JPEG with a Huawei-like profile becomes an Apple one, pixels untouched. */
+    public static void testJpegEndToEndHuaweiProfile() throws Exception {
+        if (!T.hasTool("python3") || T.exec("python3", "-I", "-c", "from PIL import Image").exit != 0) return;
+        File icc = writeTmp("e2e-huawei.icc", huaweiLikeProfile(true));
+        File jpg = T.file("e2e-huawei.jpg");
+        File py = T.file("e2e_jpeg.py");
+        T.write(py, String.join("\n",
+                "import sys",
+                "from PIL import Image",
+                "im = Image.new('RGB', (64, 48))",
+                "px = im.load()",
+                "for x in range(64):",
+                "    for y in range(48):",
+                "        px[x, y] = (x * 4, y * 5, (x * y) % 256)",
+                "im.save(sys.argv[2], 'JPEG', quality=90, icc_profile=open(sys.argv[1], 'rb').read())",
+                "").getBytes(StandardCharsets.UTF_8));
+        T.run("python3", "-I", py.getAbsolutePath(), icc.getAbsolutePath(), jpg.getAbsolutePath());
+        T.eq(HUAWEI_CPRT, T.exif(jpg).get("ICC_Profile:ProfileCopyright"), "fixture");
+        com.metakamera.core.EditSpec s = T.appleSpec();
+        s.icc.copyrightText = APPLE_CPRT;
+        s.icc.p3DescriptionText = "Display P3";
+        File out = T.file("e2e-apple.jpg");
+        EditReport r = T.edit(jpg, out, s);
+        T.check(r.changes.contains("ICC telif metni: " + HUAWEI_CPRT + " → " + APPLE_CPRT), "report " + r.changes);
+        T.check(r.changes.contains("ICC profil açıklaması: " + VENDOR_P3 + " → Display P3"), "report " + r.changes);
+        Map<String, String> m = T.exif(out, "-n");
+        T.eq(APPLE_CPRT, m.get("ICC_Profile:ProfileCopyright"), "jpeg cprt");
+        T.eq("Display P3", m.get("ICC_Profile:ProfileDescription"), "jpeg desc");
+        T.eq("APPL", m.get("ICC-header:DeviceManufacturer"), "jpeg mfr");
+        byte[] p = extractIcc(out);
+        T.check(Arrays.equals(md5Id(p), Arrays.copyOfRange(p, 84, 100)), "embedded profile MD5 valid");
+        String pix = "import sys,hashlib\nfrom PIL import Image\nprint(hashlib.md5(Image.open(sys.argv[1]).tobytes()).hexdigest())\n";
+        File pf = writeTmp("pixmd5.py", pix.getBytes(StandardCharsets.UTF_8));
+        T.eq(T.run("python3", "-I", pf.getPath(), jpg.getPath()), T.run("python3", "-I", pf.getPath(), out.getPath()),
+                "decoded pixels identical");
+    }
+
     // ================================================================== robustness
 
     /** Hand-made corrupt inputs: never a RuntimeException, always a non-null result. */
     public static void testCorruptInputs() throws Exception {
-        IccIdentity id = T.appleSpec().icc;
+        IccIdentity id = appleWithTexts();
         id.addDescTagsIfMissing = true;
         List<byte[]> bad = new ArrayList<byte[]>();
         bad.add(new byte[0]);
@@ -567,13 +1028,14 @@ public final class IccProfileEditorTest {
             bad.add(withU32(good, t.off + 8, 0x7FFFFFF0L));
             if (t.size > 20) bad.add(withU32(good, t.off + t.size - 20, 0xFFFFFFFFL));
         }
-        byte[] v4 = v4Profile(true, true);
-        for (Tag t : tags(v4)) {
-            bad.add(withU32(v4, t.off + 8, 0xFFFFFFFFL));
-            bad.add(withU32(v4, t.off + 12, 0));             // mluc record size 0
-            bad.add(withU32(v4, t.off + 12, 0xFFFFFFFFL));
-            bad.add(withU32(v4, t.off + 20, 0xFFFFFFFFL));   // mluc string length
-            bad.add(withU32(v4, t.off + 24, 0xFFFFFFFFL));   // mluc string offset
+        for (byte[] v4 : List.of(v4Profile(true, true), huaweiLikeProfile(true))) {
+            for (Tag t : tags(v4)) {
+                bad.add(withU32(v4, t.off + 8, 0xFFFFFFFFL));
+                bad.add(withU32(v4, t.off + 12, 0));             // mluc record size 0
+                bad.add(withU32(v4, t.off + 12, 0xFFFFFFFFL));
+                bad.add(withU32(v4, t.off + 20, 0xFFFFFFFFL));   // mluc string length
+                bad.add(withU32(v4, t.off + 24, 0xFFFFFFFFL));   // mluc string offset
+            }
         }
         int idx = 0;
         for (byte[] b : bad) {
@@ -591,12 +1053,13 @@ public final class IccProfileEditorTest {
         List<byte[]> seeds = new ArrayList<byte[]>();
         seeds.add(v2Profile("HUAWEI", "ELS-NX9", true));
         seeds.add(v4Profile(true, true));
+        seeds.add(huaweiLikeProfile(true));
         for (File f : firstProfiles(8)) {
             byte[] b = T.read(f);
             if (b.length < 40000) seeds.add(b);
         }
         Random rnd = new Random(12345);
-        IccIdentity full = T.appleSpec().icc;
+        IccIdentity full = appleWithTexts();
         full.addDescTagsIfMissing = true;
         IccIdentity rm = new IccIdentity();
         rm.manufacturerText = "";
@@ -685,6 +1148,11 @@ public final class IccProfileEditorTest {
      * 4-byte alignment, size field = profile length (multiple of 4 after a rebuild).
      */
     private static void verifyStructure(byte[] in, byte[] out, String what, boolean sameTagSet) {
+        verifyStructure(in, out, what, sameTagSet, DEVICE_TEXT);
+    }
+
+    /** As above; {@code textSigs} are the text tags the edit may rewrite (their data is not compared). */
+    private static void verifyStructure(byte[] in, byte[] out, String what, boolean sameTagSet, String[] textSigs) {
         List<Tag> ti = tags(in);
         List<Tag> to = tags(out);
         long size = u32(out, 0);
@@ -700,15 +1168,15 @@ public final class IccProfileEditorTest {
             T.eq((long) out.length, size, what + ": size = length");
         }
         List<String> si = new ArrayList<String>();
-        for (Tag t : ti) if (sameTagSet || !isText(t.sig)) si.add(t.sig);
+        for (Tag t : ti) if (sameTagSet || !isText(t.sig, textSigs)) si.add(t.sig);
         List<String> so = new ArrayList<String>();
-        for (Tag t : to) if (sameTagSet || !isText(t.sig)) so.add(t.sig);
+        for (Tag t : to) if (sameTagSet || !isText(t.sig, textSigs)) so.add(t.sig);
         T.eq(si, so, what + ": tag order");
         for (Tag t : to) {
             T.check(t.off + (long) t.size <= size, what + ": tag in bounds " + t.sig);
             if (rebuilt) T.eq(0, t.off % 4, what + ": aligned " + t.sig);
             T.check(t.off >= 132 + 12 * to.size(), what + ": after table " + t.sig);
-            if (isText(t.sig)) continue;
+            if (isText(t.sig, textSigs)) continue;
             Tag o = find(ti, t.sig);
             T.check(Arrays.equals(data(in, o), data(out, t)), what + ": data of " + t.sig);
         }
@@ -717,7 +1185,7 @@ public final class IccProfileEditorTest {
             for (int b = a + 1; b < ti.size(); b++) {
                 Tag x = ti.get(a);
                 Tag y = ti.get(b);
-                if (isText(x.sig) || isText(y.sig)) continue;
+                if (isText(x.sig, textSigs) || isText(y.sig, textSigs)) continue;
                 if (x.off == y.off && x.size == y.size) {
                     Tag x2 = find(to, x.sig);
                     Tag y2 = find(to, y.sig);
@@ -735,13 +1203,20 @@ public final class IccProfileEditorTest {
                 Tag xi = find(ti, x.sig);
                 Tag yi = find(ti, y.sig);
                 boolean before = xi != null && yi != null && xi.off < yi.off + yi.size && yi.off < xi.off + xi.size;
-                T.check(before && !isText(x.sig) && !isText(y.sig), what + ": new overlap " + x.sig + "/" + y.sig);
+                T.check(before && !isText(x.sig, textSigs) && !isText(y.sig, textSigs),
+                        what + ": new overlap " + x.sig + "/" + y.sig);
             }
         }
     }
 
-    private static boolean isText(String sig) {
-        return sig.equals("dmnd") || sig.equals("dmdd");
+    /** Text tags the device-name edit rewrites. */
+    private static final String[] DEVICE_TEXT = {"dmnd", "dmdd"};
+    /** Text tags a copyright / P3-description edit (plus device names) may rewrite. */
+    private static final String[] ALL_TEXT = {"dmnd", "dmdd", "cprt", "desc"};
+
+    private static boolean isText(String sig, String[] textSigs) {
+        for (String t : textSigs) if (t.equals(sig)) return true;
+        return false;
     }
 
     /** ID must be: zero if it was zero; valid MD5 if it was valid; unchanged if v2 non-MD5. */
@@ -846,7 +1321,7 @@ public final class IccProfileEditorTest {
             "        print('open\\tE' + type(e).__name__)",
             "        continue",
             "    pr = p.profile",
-            "    for k in ('manufacturer', 'model', 'header_manufacturer', 'header_model', 'profile_description', 'profile_id', 'version', 'device_class', 'xcolor_space'):",
+            "    for k in ('manufacturer', 'model', 'header_manufacturer', 'header_model', 'profile_description', 'copyright', 'profile_id', 'version', 'device_class', 'xcolor_space'):",
             "        try:",
             "            print(k + '\\t' + hx(getattr(pr, k)))",
             "        except Exception as e:",
@@ -870,6 +1345,16 @@ public final class IccProfileEditorTest {
      */
     private static int checkLcmsEquivalent(List<File> origs, List<File> outs, String expMfgText,
                                            String expModelText) throws Exception {
+        return checkLcmsEquivalent(origs, outs, expMfgText, expModelText, null, null);
+    }
+
+    /**
+     * As above; {@code expDesc} / {@code expCprt} map output file names to the description /
+     * copyright lcms must read from them (outputs not in a map must keep the original's text).
+     */
+    private static int checkLcmsEquivalent(List<File> origs, List<File> outs, String expMfgText,
+                                           String expModelText, Map<String, String> expDesc,
+                                           Map<String, String> expCprt) throws Exception {
         if (!T.hasTool("python3")) return -1;
         if (T.exec("python3", "-I", "-c", "from PIL import ImageCms").exit != 0) return -1;
         File py = T.file("lcms_check.py");
@@ -900,9 +1385,15 @@ public final class IccProfileEditorTest {
             T.check(a != null && b != null, "lcms output for " + what);
             if (a.containsKey("open")) continue;   // lcms cannot open the original either
             T.check(!b.containsKey("open"), "lcms cannot open edited " + what + ": " + b.get("open"));
-            for (String k : new String[]{"fwd", "rev", "xf", "profile_description", "device_class", "xcolor_space", "version"}) {
+            for (String k : new String[]{"fwd", "rev", "xf", "device_class", "xcolor_space", "version"}) {
                 T.eq(a.get(k), b.get(k), "lcms " + k + " for " + what);
             }
+            String ed = expDesc == null ? null : expDesc.get(what);
+            String ec = expCprt == null ? null : expCprt.get(what);
+            if (ed != null) T.eq(ed, trimOrNull(b.get("profile_description")), "lcms new description for " + what);
+            else T.eq(a.get("profile_description"), b.get("profile_description"), "lcms profile_description for " + what);
+            if (ec != null) T.eq(ec, trimOrNull(b.get("copyright")), "lcms new copyright for " + what);
+            else T.eq(a.get("copyright"), b.get("copyright"), "lcms copyright for " + what);
             byte[] ob = T.read(outs.get(i));
             T.eq("s" + hexUtf8(new String(ob, 48, 4, StandardCharsets.ISO_8859_1)), "s" + hexUtf8(b.get("header_manufacturer")),
                     "lcms header_manufacturer " + what);
@@ -1007,6 +1498,121 @@ public final class IccProfileEditorTest {
             b.tag("dmdd", mluc(new String[][]{{"enUS", "Galaxy S24 Ultra"}}));
         }
         return b.build();
+    }
+
+    /**
+     * v4.3 P3 profile like Huawei phones embed: every header device field (CMM, platform,
+     * manufacturer, model, creator) zero; the vendor is only named in 'cprt'.
+     */
+    static byte[] huaweiLikeProfile(boolean withId) {
+        ProfileBuilder b = new ProfileBuilder(0x04300000);
+        b.withId = withId;
+        b.tag("desc", mluc(new String[][]{{"enUS", VENDOR_P3}}));
+        b.tag("cprt", mluc(new String[][]{{"enUS", HUAWEI_CPRT}}));
+        b.tag("wtpt", xyz(0.9642, 1.0, 0.8249));
+        b.tag("chad", sf32(new double[]{1.0479, 0.0229, -0.0502, 0.0296, 0.9904, -0.0171, -0.0092, 0.0151, 0.7519}));
+        b.tag("rXYZ", xyz(0.5151, 0.2412, -0.0011));
+        b.tag("gXYZ", xyz(0.2919, 0.6922, 0.0419));
+        b.tag("bXYZ", xyz(0.1571, 0.0666, 0.7841));
+        b.tag("rTRC", para(2.4));
+        b.tag("gTRC", null, "rTRC");
+        b.tag("bTRC", null, "rTRC");
+        return b.build();
+    }
+
+    /** v4.3 sRGB profile like Skia (Google Pixel) writes: "sRGB IEC61966-2.1", cprt "Google Inc. 2016". */
+    static byte[] skiaLikeProfile() {
+        ProfileBuilder b = new ProfileBuilder(0x04300000);
+        b.tag("desc", mluc(new String[][]{{"enUS", "sRGB IEC61966-2.1"}}));
+        b.tag("cprt", mluc(new String[][]{{"enUS", "Google Inc. 2016"}}));
+        b.tag("wtpt", xyz(0.9642, 1.0, 0.8249));
+        b.tag("rXYZ", xyz(0.4361, 0.2225, 0.0139));
+        b.tag("gXYZ", xyz(0.3851, 0.7169, 0.0971));
+        b.tag("bXYZ", xyz(0.1431, 0.0606, 0.7141));
+        b.tag("rTRC", para(2.2));
+        b.tag("gTRC", null, "rTRC");
+        b.tag("bTRC", null, "rTRC");
+        return b.build();
+    }
+
+    /** Real sample photos (read-only): -Dmetakamera.samples, $METAKAMERA_SAMPLES or the dev default; null if absent. */
+    static File samplesDir() {
+        String p = System.getProperty("metakamera.samples");
+        if (p == null || p.isEmpty()) p = System.getenv("METAKAMERA_SAMPLES");
+        if (p == null || p.isEmpty()) {
+            p = "/tmp/claude-0/-home-user-llm-checkpoint-sync/8adfd8f4-da6d-5b54-8001-5705d498f82b/scratchpad/samples/real";
+        }
+        File d = new File(p);
+        return d.isDirectory() ? d : null;
+    }
+
+    /** The embedded ICC profile of an image as exiftool extracts it (empty when none). */
+    static byte[] extractIcc(File image) throws IOException {
+        File o = T.file(image.getName() + ".extracted.icc");
+        ProcessBuilder pb = new ProcessBuilder("exiftool", "-b", "-ICC_Profile", image.getAbsolutePath());
+        pb.redirectOutput(o);
+        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+        Process pr = pb.start();
+        try {
+            pr.waitFor();
+        } catch (InterruptedException e) {
+            throw new IOException(e);
+        }
+        return T.read(o);
+    }
+
+    /** Independent MD5 profile ID check with Python's hashlib. */
+    static void pythonMd5Check(File icc) throws IOException {
+        if (!T.hasTool("python3")) return;
+        String py = "import sys,hashlib\nd=bytearray(open(sys.argv[1],'rb').read())\nid=bytes(d[84:100])\n"
+                + "d[44:48]=bytes(4);d[64:68]=bytes(4);d[84:100]=bytes(16)\n"
+                + "print('OK' if hashlib.md5(d).digest()==id else 'BAD')\n";
+        File pf = writeTmp("md5check2.py", py.getBytes(StandardCharsets.UTF_8));
+        T.eq("OK", T.run("python3", "-I", pf.getPath(), icc.getPath()).trim(), "python md5 " + icc.getName());
+    }
+
+    /** A tag written by the editor as one en-US 'mluc' record holding {@code text}. */
+    static void checkMluc(byte[] p, Tag t, String text, String what) {
+        T.check(t != null, what + " tag present");
+        T.eq("mluc", type(p, t), what + " type");
+        T.eq(1L, u32(p, t.off + 8), what + " record count");
+        T.eq(12L, u32(p, t.off + 12), what + " record size");
+        T.eq("enUS", new String(p, t.off + 16, 4, StandardCharsets.ISO_8859_1), what + " locale");
+        int len = (int) u32(p, t.off + 20);
+        int off = (int) u32(p, t.off + 24);
+        T.eq((long) t.size, (long) off + len, what + " tag size");
+        T.eq(text, new String(p, t.off + off, len, StandardCharsets.UTF_16BE), what + " text");
+    }
+
+    /** Text of a 'text' (textType) tag; it must end with its single NUL. */
+    static String textTypeValue(byte[] p, Tag t) {
+        T.eq("text", type(p, t), "textType");
+        int end = t.off + 8;
+        while (end < t.off + t.size && p[end] != 0) end++;
+        T.eq((long) t.off + t.size - 1, (long) end, "textType NUL at the end");
+        return new String(p, t.off + 8, end - t.off - 8, StandardCharsets.ISO_8859_1);
+    }
+
+    /** Text of a desc/text/mluc tag (en-US or first mluc record), independent of the core; null if absent. */
+    static String textOf(byte[] p, Tag t) {
+        if (t == null) return null;
+        String ty = type(p, t);
+        if (ty.equals("text")) return textTypeValue(p, t).trim();
+        if (ty.equals("desc")) return descParts(p, t).ascii.trim();
+        if (ty.equals("mluc")) {
+            int n = (int) u32(p, t.off + 8);
+            int rs = (int) u32(p, t.off + 12);
+            int best = 0;
+            for (int i = 0; i < n; i++) {
+                if (new String(p, t.off + 16 + i * rs, 4, StandardCharsets.ISO_8859_1).equals("enUS")) {
+                    best = i;
+                    break;
+                }
+            }
+            int rec = t.off + 16 + best * rs;
+            return new String(p, t.off + (int) u32(p, rec + 8), (int) u32(p, rec + 4), StandardCharsets.UTF_16BE).trim();
+        }
+        return null;
     }
 
     static final class ProfileBuilder {

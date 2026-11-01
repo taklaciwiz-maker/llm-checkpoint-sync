@@ -4,9 +4,10 @@ import com.metakamera.core.ByteUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * Reads and writes the ICC text tag types used by 'desc', 'dmnd' and 'dmdd':
+ * Reads and writes the ICC text tag types used by 'desc', 'cprt', 'dmnd' and 'dmdd':
  * textDescriptionType ('desc', ICC v2), multiLocalizedUnicodeType ('mluc', ICC v4) and the
  * plain textType ('text').  Every read is bounds-checked; malformed data yields
  * {@code ok == false} instead of an exception.
@@ -130,6 +131,24 @@ final class IccText {
             return records.get(best);
         }
         return ascii;
+    }
+
+    /**
+     * True when any readable text representation (desc ASCII/Unicode/ScriptCode, any mluc record,
+     * text) contains {@code needle}, ignoring case.
+     */
+    boolean mentions(String needle) {
+        if (!ok) return false;
+        String n = needle.toUpperCase(Locale.US);
+        if (containsUpper(ascii, n) || containsUpper(unicode, n) || containsUpper(script, n)) return true;
+        for (String r : records) {
+            if (containsUpper(r, n)) return true;
+        }
+        return false;
+    }
+
+    private static boolean containsUpper(String s, String upperNeedle) {
+        return s != null && s.toUpperCase(Locale.US).contains(upperNeedle);
     }
 
     /** True when every text representation of this tag already equals {@code target}. */

@@ -17,7 +17,9 @@ import java.util.List;
  * ICC profile device-identity editor (ICC.1:2010 v4 and ICC v2 profiles).
  *
  * <p>Header-only edits patch the 128-byte header in place and keep every other byte. Edits of the
- * 'dmnd'/'dmdd' text tags rebuild the profile (header + tag table + 4-byte aligned tag data) while
+ * 'dmnd'/'dmdd' (device names), 'cprt' (copyright: where Huawei/Xiaomi/Samsung profiles name the
+ * vendor) and 'desc' (only P3 display profile names) text tags rebuild the profile (header + tag
+ * table + 4-byte aligned tag data) while
  * keeping the tag order, the bytes of every other tag and shared tag data (several entries pointing
  * at the same data still share one copy). Malformed profiles are never "repaired": they are
  * returned untouched (or header-only edited) with a Turkish warning in the report.
@@ -30,6 +32,7 @@ public final class IccProfileEditor {
     static final String SIG_DESC = "desc";
     static final String SIG_DMND = "dmnd";
     static final String SIG_DMDD = "dmdd";
+    static final String SIG_CPRT = "cprt";
 
     /** Warning added when an unexpected internal error happened (the profile is then left untouched). */
     public static final String INTERNAL_ERROR_WARNING = "ICC profili işlenemedi (iç hata), değiştirilmedi";
@@ -50,8 +53,10 @@ public final class IccProfileEditor {
      * Returns the edited profile (never null; may be the same array if nothing changed).
      * Updates header signatures (CMM 4..7, platform 40..43, manufacturer 48..51, model 52..55,
      * creator 80..83), rewrites existing 'dmnd'/'dmdd' text tags (and adds them if
-     * {@link IccIdentity#addDescTagsIfMissing}), fixes the profile size field, and recomputes the
-     * MD5 profile ID (bytes 84..99) when it was non-zero.
+     * {@link IccIdentity#addDescTagsIfMissing}), rewrites an existing 'cprt' text
+     * ({@link IccIdentity#copyrightText}) and a P3 'desc' text ({@link IccIdentity#p3DescriptionText}),
+     * keeping each tag's type, fixes the profile size field, and recomputes the MD5 profile ID
+     * (bytes 84..99) when it was non-zero.
      *
      * <p>Malformed profiles never throw: they are returned unchanged (or with only the header
      * patched) and a Turkish warning is added to {@code report}.
@@ -185,24 +190,30 @@ public final class IccProfileEditor {
         patchSig(header, OFF_MODEL, id.modelSig, "ICC model", headerChanges);
         patchSig(header, OFF_CREATOR, id.creatorSig, "ICC oluşturan", headerChanges);
 
-        // ---- dmnd / dmdd text tags
+        // ---- text tags: dmnd / dmdd (device names), cprt (copyright), desc (P3 profile name)
         List<String> tagChanges = new ArrayList<String>();
         List<TagEntry> tags = null;
         boolean tagsChanged = false;
-        if (id.manufacturerText != null || id.modelText != null) {
+        String cprt = nonEmpty(id.copyrightText);
+        String p3Desc = nonEmpty(id.p3DescriptionText);
+        String wanted = textTagList(id, cprt, p3Desc);
+        if (wanted.length() > 0) {
             if (!sizeOk) {
                 rep.warn("ICC profil boyutu tutarsız (" + declared + " / " + len
-                        + " bayt); dmnd/dmdd etiketleri değiştirilmedi");
+                        + " bayt); " + wanted + " etiketleri değiştirilmedi");
             } else {
                 tags = parseTable(p, size);
                 if (tags == null) {
-                    rep.warn("ICC etiket tablosu düzensiz; dmnd/dmdd etiketleri değiştirilmedi, "
+                    rep.warn("ICC etiket tablosu düzensiz; " + wanted + " etiketleri değiştirilmedi, "
                             + "yalnızca başlık alanları güncellendi");
                 } else {
                     tagsChanged |= planText(p, tags, SIG_DMND, id.manufacturerText, id.addDescTagsIfMissing,
                             major, "ICC üretici açıklaması (dmnd)", tagChanges);
                     tagsChanged |= planText(p, tags, SIG_DMDD, id.modelText, id.addDescTagsIfMissing,
                             major, "ICC model açıklaması (dmdd)", tagChanges);
+                    tagsChanged |= planReplace(p, tags, SIG_CPRT, cprt, false, "ICC telif metni", tagChanges, rep);
+                    tagsChanged |= planReplace(p, tags, SIG_DESC, p3Desc, true, "ICC profil açıklaması",
+                            tagChanges, rep);
                 }
             }
         }
@@ -287,6 +298,52 @@ public final class IccProfileEditor {
             any = true;
         }
         return any;
+    }
+
+    /**
+     * Replaces the text of every existing {@code sig} tag (never adds or removes one), keeping its
+     * tag type. With {@code onlyP3} only tags whose current text mentions "P3" are touched. Returns
+     * true if anything changes.
+     */
+    private static boolean planReplace(byte[] p, List<TagEntry> tags, String sig, String target, boolean onlyP3,
+                                       String label, List<String> changes, EditReport rep) {
+        if (target == null) return false;
+        boolean any = false;
+        boolean reported = false;
+        boolean warned = false;
+        for (TagEntry t : tags) {
+            if (t.added || !sig.equals(t.sigText)) continue;
+            IccText cur = IccText.decode(p, t.off, t.size);
+            String old = cur.text();
+            if (old == null) {
+                // unknown tag type or malformed text: never guessed at
+                if (!onlyP3 && !warned) {
+                    warned = true;
+                    rep.warn("ICC '" + sig + "' etiketi okunamadı (tür '" + printable(cur.type)
+                            + "'); değiştirilmedi");
+                }
+                continue;
+            }
+            if (onlyP3 && !cur.mentions("p3")) continue;
+            if (cur.matches(target)) continue;
+            t.newData = IccText.encode(cur.type, target);
+            any = true;
+            if (!reported) {
+                reported = true;
+                changes.add(label + ": " + display(old) + " → " + target);
+            }
+        }
+        return any;
+    }
+
+    /** "dmnd/dmdd/cprt/desc": the text tags this identity asks to change ("" = none). */
+    private static String textTagList(IccIdentity id, String cprt, String p3Desc) {
+        StringBuilder sb = new StringBuilder();
+        if (id.manufacturerText != null) sb.append(SIG_DMND);
+        if (id.modelText != null) sb.append(sb.length() > 0 ? "/" : "").append(SIG_DMDD);
+        if (cprt != null) sb.append(sb.length() > 0 ? "/" : "").append(SIG_CPRT);
+        if (p3Desc != null) sb.append(sb.length() > 0 ? "/" : "").append(SIG_DESC);
+        return sb.toString();
     }
 
     /** Header + tag table + 4-byte aligned tag data; trailing bytes after the declared size are kept. */
@@ -485,6 +542,21 @@ public final class IccProfileEditor {
 
     private static String display(String s) {
         return s.length() == 0 ? "(boş)" : s;
+    }
+
+    private static String nonEmpty(String s) {
+        return s == null || s.length() == 0 ? null : s;
+    }
+
+    /** Tag type signature for messages: printable ASCII, "?" otherwise. */
+    private static String printable(String s) {
+        if (s == null) return "?";
+        StringBuilder sb = new StringBuilder(4);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            sb.append(c >= 0x20 && c < 0x7F ? c : '?');
+        }
+        return sb.toString();
     }
 
     private static boolean isZero(byte[] b, int off, int len) {

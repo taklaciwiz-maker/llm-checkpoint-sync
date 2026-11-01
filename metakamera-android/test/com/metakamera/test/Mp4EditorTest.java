@@ -805,14 +805,19 @@ public final class Mp4EditorTest {
     private static File iphoneLike() throws IOException {
         File f = T.file("iphone-like.mp4");
         if (f.exists()) return f;
+        byte[] meta = keysMeta(false, KEY_LENS, OLD_LENS, "com.apple.quicktime.camera.identifier", "Back");
+        T.write(f, insertChild(T.read(iphoneKeys()), meta, "moov", "trak"));
+        return f;
+    }
+
+    /** mp4Fast() plus moov/meta Keys make/model/software as an iPhone writes them (no track meta). */
+    private static File iphoneKeys() throws IOException {
         File k = T.file("iphone-keys.mp4");
         if (!k.exists()) {
             T.run("exiftool", "-q", "-o", k.getPath(), "-Keys:Make=Apple", "-Keys:Model=iPhone 14 Pro",
                     "-Keys:Software=16.1", mp4Fast().getPath());
         }
-        byte[] meta = keysMeta(false, KEY_LENS, OLD_LENS, "com.apple.quicktime.camera.identifier", "Back");
-        T.write(f, insertChild(T.read(k), meta, "moov", "trak"));
-        return f;
+        return k;
     }
 
     public static void testTrackLensModel() throws Exception {
@@ -908,6 +913,295 @@ public final class Mp4EditorTest {
         T.check(traks.size() == 2, "fixture has video + audio");
         T.eq(1, childrenOf(b, traks.get(0), "meta").size(), "one meta in the video track");
         T.eq(0, childrenOf(b, traks.get(1), "meta").size(), "no meta in the audio track");
+    }
+
+    // ------------------------------------------------------------------ track-level 35 mm equivalent focal length
+
+    private static final String KEY_FOCAL = "com.apple.quicktime.camera.focal_length.35mm_equivalent";
+    private static final String KEY_CAM_ID = "com.apple.quicktime.camera.identifier";
+    /** exiftool's (generated) name for the track-level key. */
+    private static final String FOCAL_TAG = "Track1:CameraFocalLength35mmEquivalent";
+
+    /** Payload of a 'data' atom: type indicator, locale, value. */
+    static byte[] dataPayload(int type, long locale, byte[] value) {
+        return cat(u32(type), u32(locale), value);
+    }
+
+    static byte[] dataPayload(int type, byte[] value) {
+        return dataPayload(type, 0, value);
+    }
+
+    /** Big-endian two's complement integer of {@code width} bytes. */
+    static byte[] beInt(long v, int width) {
+        byte[] b = new byte[width];
+        for (int i = width - 1; i >= 0; i--) {
+            b[i] = (byte) v;
+            v >>= 8;
+        }
+        return b;
+    }
+
+    /**
+     * QuickTime-style (or FullBox) 'mdta' meta: name, value pairs where a value is a String (UTF-8,
+     * type 1) or a byte[] holding a complete 'data' payload (type, locale, value).
+     */
+    static byte[] keysMetaData(boolean fullBox, Object... kv) {
+        byte[] hdlr = fullbox("hdlr", 0, u32(0), ascii("mdta"), u32(0), u32(0), u32(0), new byte[1]);
+        int n = kv.length / 2;
+        byte[] entries = new byte[0];
+        byte[] items = new byte[0];
+        for (int i = 0; i < n; i++) {
+            byte[] name = ((String) kv[2 * i]).getBytes(ByteUtils.UTF_8);
+            Object v = kv[2 * i + 1];
+            byte[] payload = v instanceof String
+                    ? dataPayload(1, ((String) v).getBytes(ByteUtils.UTF_8)) : (byte[]) v;
+            entries = cat(entries, u32(8 + name.length), ascii("mdta"), name);
+            items = cat(items, box(new String(u32(i + 1), ByteUtils.ISO_8859_1), box("data", payload)));
+        }
+        byte[] body = cat(hdlr, fullbox("keys", 0, u32(n), entries), box("ilst", items));
+        return fullBox ? fullbox("meta", 0, body) : box("meta", body);
+    }
+
+    /** Key names of the first track's 'mdta' meta, in table order (empty when there is none). */
+    static List<String> trakKeyNames(byte[] b) {
+        List<String> r = new ArrayList<String>();
+        Box meta = find(b, "moov", "trak", "meta");
+        if (meta == null) return r;
+        Box keys = childrenOf(b, meta, "keys").get(0);
+        long n = ByteUtils.u32be(b, keys.payload() + 4);
+        int pos = keys.payload() + 8;
+        for (int i = 0; i < n; i++) {
+            int sz = (int) ByteUtils.u32be(b, pos);
+            r.add(new String(b, pos + 8, sz - 8, ByteUtils.UTF_8));
+            pos += sz;
+        }
+        return r;
+    }
+
+    /** 'data' payload of a key in the first track's 'mdta' meta (null when absent). */
+    static byte[] trakKeyData(byte[] b, String key) {
+        int idx = trakKeyNames(b).indexOf(key) + 1;
+        if (idx == 0) return null;
+        Box meta = find(b, "moov", "trak", "meta");
+        Box ilst = childrenOf(b, meta, "ilst").get(0);
+        for (Box item : childrenOf(b, ilst, null)) {
+            if (ByteUtils.u32be(b, item.off + 4) != idx) continue;
+            Box data = childrenOf(b, item, "data").get(0);
+            return Arrays.copyOfRange(b, data.payload(), data.end());
+        }
+        return null;
+    }
+
+    /** iPhone-like MP4: Keys make/model + video trak/meta with lens model, focal length (int32, type 21), id. */
+    private static File iphoneFocal() throws IOException {
+        File f = T.file("iphone-focal.mp4");
+        if (f.exists()) return f;
+        byte[] meta = keysMetaData(false, KEY_LENS, OLD_LENS, KEY_FOCAL, dataPayload(21, beInt(24, 4)),
+                KEY_CAM_ID, "Back");
+        T.write(f, insertChild(T.read(iphoneKeys()), meta, "moov", "trak"));
+        return f;
+    }
+
+    public static void testTrackFocalLength35mm() throws Exception {
+        if (!tools()) return;
+        File in = iphoneFocal();
+        byte[] a = T.read(in);
+        Map<String, String> x0 = T.exif(in);
+        T.eq("24", x0.get(FOCAL_TAG), "fixture focal length (exiftool): " + x0);
+        T.eq(OLD_LENS, x0.get("Track1:CameraLensModel"), "fixture lens model");
+        sameMedia(mp4Fast(), in);
+        T.eq(24, T.inspect(in).focalLength35mm, "inspect reads the track-level focal length");
+
+        // Apple target with the chosen camera module: updated in place, type 21 / int32 / key order kept
+        EditSpec ap = appleSpec(true);
+        ap.focalLength35mm = 26;
+        File out = out(in, "apple-26");
+        EditReport r = T.edit(in, out, ap);
+        T.contains(changes(r), "Video FocalLengthIn35mmFormat (Keys/trak: " + KEY_FOCAL + "): 24 → 26", "report");
+        byte[] b = T.read(out);
+        T.check(Arrays.equals(dataPayload(21, beInt(26, 4)), trakKeyData(b, KEY_FOCAL)), "type 21, int32 kept");
+        T.eq(Arrays.asList(KEY_LENS, KEY_FOCAL, KEY_CAM_ID), trakKeyNames(b), "key table kept");
+        Map<String, String> x = T.exif(out);
+        T.eq("26", x.get(FOCAL_TAG), "exiftool focal length");
+        T.check(!x.containsKey(FOCAL_TAG + "#2"), "single focal key");
+        T.eq(APPLE_LENS, x.get("Track1:CameraLensModel"), "lens model");
+        T.eq(26, T.inspect(out).focalLength35mm, "inspect");
+        T.eq(1, childrenOf(b, find(b, "moov", "trak"), "meta").size(), "single track meta");
+        sameMedia(in, out);
+        checkOffsetsFollowMdat(a, b);
+        idempotent(out, ap);
+
+        // Android target removing Apple traces, no focal length given: removed with the lens model
+        EditSpec sam = samsungSpec(true);
+        File out2 = out(in, "samsung");
+        EditReport r2 = T.edit(in, out2, sam);
+        T.contains(changes(r2), "Orijinal marka izi kaldırıldı (Keys/trak: " + KEY_FOCAL + "): 24", "report");
+        byte[] b2 = T.read(out2);
+        Map<String, String> x2 = T.exif(out2);
+        T.check(!x2.containsKey(FOCAL_TAG) && !x2.containsKey("Track1:CameraLensModel"), "Apple keys removed: " + x2);
+        T.eq("Back", x2.get("Track1:CameraIdentifier"), "other track key kept");
+        T.eq(Arrays.asList(KEY_CAM_ID), trakKeyNames(b2), "remaining key renumbered");
+        T.eq(0, T.inspect(out2).focalLength35mm, "inspect after removal");
+        sameMedia(in, out2);
+        checkOffsetsFollowMdat(a, b2);
+        idempotent(out2, sam);
+
+        // Android target with a focal length: the existing key follows it (like lens_model with a lens)
+        EditSpec sam23 = samsungSpec(true);
+        sam23.focalLength35mm = 23;
+        File out3 = out(in, "samsung-23");
+        T.edit(in, out3, sam23);
+        T.eq("23", T.exif(out3).get(FOCAL_TAG), "updated for an Android target with a value");
+        T.check(!T.exif(out3).containsKey("Track1:CameraLensModel"), "lens model trace still removed");
+        sameMedia(in, out3);
+        idempotent(out3, sam23);
+
+        // kept: null for an Apple target, when the option is off, and for non-positive values
+        File out4 = out(in, "keep-apple");
+        T.edit(in, out4, appleSpec(true));
+        T.eq("24", T.exif(out4).get(FOCAL_TAG), "kept for an Apple target");
+        File out5 = out(in, "keep-opt");
+        T.edit(in, out5, samsungSpec(false));
+        T.eq("24", T.exif(out5).get(FOCAL_TAG), "kept when removeMakerNote is off");
+        EditSpec zero = appleSpec(true);
+        zero.focalLength35mm = 0;
+        File out6 = out(in, "keep-zero");
+        T.edit(in, out6, zero);
+        T.check(Arrays.equals(T.read(out4), T.read(out6)), "0 behaves like null");
+
+        // a track meta holding only Apple camera keys disappears with them
+        File only = T.file("iphone-focal-only.mp4");
+        T.write(only, insertChild(T.read(mp4Fast()), keysMetaData(false, KEY_LENS, OLD_LENS, KEY_FOCAL,
+                dataPayload(21, beInt(24, 4))), "moov", "trak"));
+        File out7 = out(only, "samsung");
+        T.edit(only, out7, samsungSpec(true));
+        T.check(find(T.read(out7), "moov", "trak", "meta") == null, "empty track meta dropped");
+        sameMedia(only, out7);
+    }
+
+    public static void testAppleTargetCreatesFocalLengthNextToLens() throws Exception {
+        if (!tools()) return;
+        File in = mp4Fast();
+        byte[] a = T.read(in);
+        EditSpec s = appleSpec(true);
+        s.focalLength35mm = 24;
+        File out = out(in, "focal");
+        EditReport r = T.edit(in, out, s);
+        T.contains(changes(r), "Video LensModel (Keys/trak): (yok) → " + APPLE_LENS, "report lens");
+        T.contains(changes(r), "Video FocalLengthIn35mmFormat (Keys/trak): (yok) → 24", "report focal");
+        byte[] b = T.read(out);
+        T.eq(Arrays.asList(KEY_LENS, KEY_FOCAL), trakKeyNames(b), "lens model, then focal length (as iPhones)");
+        T.check(Arrays.equals(dataPayload(21, beInt(24, 4)), trakKeyData(b, KEY_FOCAL)), "signed BE int32, type 21");
+        Map<String, String> x = T.exif(out);
+        T.eq("24", x.get(FOCAL_TAG), "exiftool focal length");
+        T.eq(APPLE_LENS, x.get("Track1:CameraLensModel"), "exiftool lens model");
+        T.eq(24, T.inspect(out).focalLength35mm, "inspect");
+        checkOffsetsFollowMdat(a, b);
+        sameMedia(in, out);
+        idempotent(out, s);
+        Box moov = find(b, "moov");
+        List<Box> traks = childrenOf(b, moov, "trak");
+        T.eq(0, childrenOf(b, traks.get(1), "meta").size(), "no meta in the audio track");
+
+        // iPhone source without a focal key (older iOS): appended to the table holding the lens key
+        File ip = iphoneLike();
+        EditSpec s2 = appleSpec(true);
+        s2.focalLength35mm = 77;
+        File out2 = out(ip, "focal-77");
+        EditReport r2 = T.edit(ip, out2, s2);
+        T.contains(changes(r2), "Video FocalLengthIn35mmFormat (Keys/trak): (yok) → 77", "report");
+        byte[] b2 = T.read(out2);
+        T.eq(Arrays.asList(KEY_LENS, KEY_CAM_ID, KEY_FOCAL), trakKeyNames(b2), "appended next to the lens key");
+        T.eq(1, childrenOf(b2, find(b2, "moov", "trak"), "meta").size(), "single track meta");
+        T.eq("77", T.exif(out2).get(FOCAL_TAG), "exiftool");
+        checkOffsetsFollowMdat(T.read(ip), b2);
+        sameMedia(ip, out2);
+        idempotent(out2, s2);
+        // ...even when the lens model itself is kept (lensModel null)
+        EditSpec s2b = spec();
+        s2b.lensModel = null;
+        s2b.focalLength35mm = 26;
+        File out2b = out(ip, "focal-keep-lens");
+        T.edit(ip, out2b, s2b);
+        T.eq("26", T.exif(out2b).get(FOCAL_TAG), "created next to a kept lens key");
+        T.eq(OLD_LENS, T.exif(out2b).get("Track1:CameraLensModel"), "lens kept");
+
+        // no lens key and none created (lens model null): no lone focal key
+        EditSpec s3 = spec();
+        s3.lensModel = null;
+        s3.focalLength35mm = 24;
+        File out3 = out(in, "focal-nolens");
+        EditReport r3 = T.edit(in, out3, s3);
+        T.check(find(T.read(out3), "moov", "trak", "meta") == null, "no track meta");
+        T.notContains(changes(r3), "FocalLength", "report");
+        // non-Apple target: never created
+        EditSpec s4 = samsungSpec(true);
+        s4.lensModel = "Galaxy S25 Ultra main camera";
+        s4.focalLength35mm = 23;
+        File out4 = out(in, "focal-samsung");
+        T.edit(in, out4, s4);
+        T.check(!T.exif(out4).containsKey(FOCAL_TAG), "no Apple focal key for an Android target");
+
+        // lens key at movie level (ffmpeg use_metadata_tags): the focal key joins that table
+        File ffl = ff("ffmpeg-lens.mp4", "-movflags", "use_metadata_tags+faststart",
+                "-metadata", KEY_LENS + "=" + OLD_LENS);
+        EditSpec s5 = appleSpec(true);
+        s5.focalLength35mm = 26;
+        File out5 = out(ffl, "focal");
+        EditReport r5 = T.edit(ffl, out5, s5);
+        T.contains(changes(r5), "Video FocalLengthIn35mmFormat (Keys): (yok) → 26", "report");
+        Map<String, String> t5 = ffTags(out5);
+        T.eq("26", t5.get(KEY_FOCAL), "ffprobe reads the integer key: " + t5);
+        T.eq(APPLE_LENS, t5.get(KEY_LENS), "ffprobe lens model");
+        T.eq("26", T.exif(out5).get("Keys:CameraFocalLength35mmEquivalent"), "exiftool movie-level key");
+        sameMedia(ffl, out5);
+        idempotent(out5, s5);
+    }
+
+    /** Existing numeric 'data' atoms keep their type, width (when the value fits) and locale. */
+    public static void testFocalLengthDataTypes() throws Exception {
+        long eng = 0x656E5553L;
+        Object[][] cases = {
+                // initial payload, new value, expected payload, old value shown in the report
+                {dataPayload(21, beInt(24, 1)), 26L, dataPayload(21, beInt(26, 1)), "24"},
+                {dataPayload(21, beInt(24, 1)), 300L, dataPayload(21, beInt(300, 4)), "24"},
+                {dataPayload(21, beInt(-3, 2)), 26L, dataPayload(21, beInt(26, 2)), "-3"},
+                {dataPayload(21, beInt(24, 8)), 26L, dataPayload(21, beInt(26, 8)), "24"},
+                {dataPayload(22, beInt(24, 2)), 120L, dataPayload(22, beInt(120, 2)), "24"},
+                {dataPayload(22, beInt(24, 1)), 200L, dataPayload(22, beInt(200, 1)), "24"},
+                {dataPayload(66, beInt(24, 2)), 26L, dataPayload(66, beInt(26, 2)), "24"},
+                {dataPayload(75, beInt(24, 1)), 1000L, dataPayload(21, beInt(1000, 4)), "24"},
+                {dataPayload(23, u32(Float.floatToIntBits(24f))), 26L, dataPayload(23, u32(Float.floatToIntBits(26f))), "24"},
+                {dataPayload(24, beInt(Double.doubleToLongBits(24.0), 8)), 26L,
+                        dataPayload(24, beInt(Double.doubleToLongBits(26.0), 8)), "24"},
+                {dataPayload(1, ascii("24")), 26L, dataPayload(1, ascii("26")), "24"},
+                {dataPayload(21, eng, beInt(24, 4)), 26L, dataPayload(21, eng, beInt(26, 4)), "24"},
+                {dataPayload(0, ascii("junk")), 26L, dataPayload(21, beInt(26, 4)), null},
+                {dataPayload(21, new byte[0]), 26L, dataPayload(21, beInt(26, 4)), null},
+        };
+        int k = 0;
+        for (Object[] c : cases) {
+            String what = "case " + k++;
+            byte[] meta = keysMetaData(false, KEY_CAM_ID, "Back", KEY_FOCAL, c[0]);
+            byte[] in = insertChild(synth(fullbox("stco", 0, u32(1), u32(0)), null), meta, "moov", "trak");
+            int shown = c[3] == null ? 0 : Math.max(0, Integer.parseInt((String) c[3]));
+            T.eq(shown, MetadataEditor.inspect(new ByteArraySource(in)).focalLength35mm, what + " inspect");
+            EditSpec s = nullSpec();
+            s.focalLength35mm = (int) (long) (Long) c[1];
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            EditReport r = MetadataEditor.edit(new ByteArraySource(in), bo, s, null);
+            byte[] out = bo.toByteArray();
+            byte[] got = trakKeyData(out, KEY_FOCAL);
+            T.check(got != null && Arrays.equals((byte[]) c[2], got),
+                    what + ": payload " + (got == null ? null : Arrays.toString(got)));
+            T.eq(Arrays.asList(KEY_CAM_ID, KEY_FOCAL), trakKeyNames(out), what + " keys");
+            T.contains(changes(r), "Video FocalLengthIn35mmFormat (Keys/trak: " + KEY_FOCAL + "): "
+                    + (c[3] == null ? "(yok)" : c[3]) + " → " + c[1], what + " report");
+            T.eq("MDATDATA", new String(out, find(out, "mdat").payload(), 8, ByteUtils.ISO_8859_1), what + " mdat");
+            ByteArrayOutputStream bo2 = new ByteArrayOutputStream();
+            EditReport r2 = MetadataEditor.edit(new ByteArraySource(out), bo2, s, null);
+            T.check(Arrays.equals(out, bo2.toByteArray()) && r2.changes.isEmpty(), what + " idempotent " + r2);
+        }
     }
 
     // ------------------------------------------------------------------ Samsung smta / mdln, 3GPP auth
@@ -1260,7 +1554,10 @@ public final class Mp4EditorTest {
             bases.add(T.read(vendorKeys()));
             bases.add(T.read(iphoneLike()));
             bases.add(T.read(samsungLike()));
+            bases.add(T.read(iphoneFocal()));
         }
+        bases.add(insertChild(synth(fullbox("stco", 0, u32(1), u32(0)), null), keysMetaData(false, KEY_LENS, OLD_LENS,
+                KEY_FOCAL, dataPayload(21, beInt(24, 2))), "moov", "trak"));
         bases.add(synth(fullbox("stco", 0, u32(1), u32(0)), box("udta", box("©mak", u16(2), u16(0),
                 ascii("HW")))));
         Random rnd = new Random(42);
@@ -1296,7 +1593,9 @@ public final class Mp4EditorTest {
     }
 
     private static void tryAll(byte[] data) throws Exception {
-        EditSpec[] specs = {spec(), removeAll(), samsungSpec(true)};
+        EditSpec apple = appleSpec(true);
+        apple.focalLength35mm = 300;   // wider than a 1/2-byte value: forces re-encoding
+        EditSpec[] specs = {apple, removeAll(), samsungSpec(true)};
         for (EditSpec s : specs) {
             try {
                 Mp4Editor.edit(new ByteArraySource(data), new ByteArrayOutputStream(), s, new EditReport(), null);
