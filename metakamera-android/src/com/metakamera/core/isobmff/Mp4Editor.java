@@ -21,11 +21,14 @@ import java.util.Locale;
  * Rewrites the device identity of a video:
  * <ul>
  *   <li>QuickTime Keys metadata (moov/meta, handler 'mdta'): com.apple.quicktime.make / model /
- *       software (what iPhones write; read by Apple Photos, Google Photos, exiftool "Keys:Make"),
- *       plus existing keys ending in ".make"/".manufacturer"/".model"; optional removal of
- *       com.android.version. 'mdta' metas inside moov/udta (ffmpeg style) are updated too.</li>
- *   <li>QuickTime user data text atoms moov/udta '©mak' / '©mod' / '©swr' and iTunes-style
- *       udta/meta('mdir')/ilst items.</li>
+ *       software (what iPhones write; read by Apple Photos, OPPO Gallery, exiftool "Keys:Make"),
+ *       com.android.manufacturer / model / version (Huawei Gallery, Immich), vendor keys
+ *       (com.oplus.product.model, com.honor.lens.model, ...) and other keys ending in
+ *       ".make"/".manufacturer"/".model" — see {@link Mp4BrandPolicy}. 'mdta' metas inside
+ *       moov/udta (ffmpeg style) and moov/trak (track level, iPhone lens model) are updated too.</li>
+ *   <li>QuickTime user data text atoms moov/udta '©mak' / '©mod' / '©swr', iTunes-style
+ *       udta/meta('mdir')/ilst items, Samsung udta/smta/'mdln' and 3GPP udta/'auth' naming the
+ *       original device.</li>
  * </ul>
  * Only 'moov' is rebuilt (in memory, at most 256 MB). Media data is streamed verbatim. When the
  * 'moov' size changes, an adjacent 'free' box absorbs the difference if possible; otherwise every
@@ -36,11 +39,7 @@ public final class Mp4Editor {
     static final long MAX_MOOV = 256L * 1024 * 1024;
     static final long MAX_FRAGMENT_BOX = 64L * 1024 * 1024;
 
-    private static final String KEY_PREFIX = "com.apple.quicktime.";
-    private static final String KEY_ANDROID_VERSION = "com.android.version";
-
     private static final String[] FIELD = {"Make", "Model", "Software"};
-    private static final String[] KEY_SUFFIX = {"make", "model", "software"};
     /** User-data atoms per field; the first one is created when missing (make/model only). */
     private static final String[][] UDTA_ATOMS = {
             {"©mak"},
@@ -49,8 +48,17 @@ public final class Mp4Editor {
     };
     private static final String[] ILST_ATOMS = {"©mak", "©mod", "©swr"};
 
+    /** Standard Keys kinds per field (make, model, software). */
+    private static final int[] STD_KIND = {Mp4BrandPolicy.STD_MAKE, Mp4BrandPolicy.STD_MODEL,
+            Mp4BrandPolicy.STD_SOFTWARE};
+    /** Keys kinds created in moov/meta when missing, in this order. */
+    private static final int[] CREATED_KINDS = {Mp4BrandPolicy.STD_MAKE, Mp4BrandPolicy.STD_MODEL,
+            Mp4BrandPolicy.STD_SOFTWARE, Mp4BrandPolicy.ANDROID_MAKE, Mp4BrandPolicy.ANDROID_MODEL};
+    private static final String KEY_LOCATION = "com.apple.quicktime.location.ISO6709";
+
     private static final String NONE = "(yok)";
     private static final String REMOVED = "(silindi)";
+    private static final String TRACE = "Orijinal marka izi kaldırıldı";
 
     private static final int PLAN_NONE = 0;
     private static final int PLAN_SHRINK_FREE = 1;
@@ -145,8 +153,27 @@ public final class Mp4Editor {
         final List<Mp4Box> itunesMetas = new ArrayList<Mp4Box>();
         /** iTunes-style meta directly in moov (read-only). */
         Mp4Box moovItunesMeta;
+        /** Track-level 'mdta' metas (moov/trak/meta, e.g. iPhone lens model), with their 'trak'. */
+        final List<QtKeysMeta> trakKeys = new ArrayList<QtKeysMeta>();
+        final List<Mp4Box> trakKeysParent = new ArrayList<Mp4Box>();
+        /** Expanded Samsung moov/udta/'smta' boxes. */
+        final List<Mp4Box> smtas = new ArrayList<Mp4Box>();
+        Mp4Box firstVideoTrak;
+        /** 'mdta' meta of the first video track (null if none). */
+        QtKeysMeta videoTrakKeys;
+        /** The first video track has a 'meta' that must not be touched (other handler / unreadable). */
+        boolean videoTrakForeignMeta;
         Mp4Box firstVideoTkhd;
         Mp4Box mvhd;
+
+        /** Every 'mdta' key table: moov/meta, moov/udta/meta, moov/trak/meta. */
+        List<QtKeysMeta> allKeys() {
+            List<QtKeysMeta> r = new ArrayList<QtKeysMeta>();
+            if (keys != null) r.add(keys);
+            r.addAll(udtaKeys);
+            r.addAll(trakKeys);
+            return r;
+        }
     }
 
     private static Moov parseMoov(byte[] moovBytes, EditReport report) throws UnsupportedFormatException {
@@ -174,6 +201,10 @@ public final class Mp4Editor {
                     continue;
                 }
                 for (Mp4Box u : c.children) {
+                    if ("smta".equals(u.type)) {
+                        if (expandSmta(u)) m.smtas.add(u);
+                        continue;
+                    }
                     if (!"meta".equals(u.type)) continue;
                     if (!QtKeysMeta.expandMeta(u)) continue;
                     String h = QtKeysMeta.handler(u);
@@ -211,10 +242,36 @@ public final class Mp4Editor {
         return m;
     }
 
+    /** Samsung 'smta': child atoms after 4 bytes of version/flags (exiftool: Start => 4). */
+    private static boolean expandSmta(Mp4Box smta) {
+        if (smta.isContainer()) return true;
+        if (smta.src == null) return false;
+        boolean full = QtKeysMeta.hasVersionFlags(smta.src, smta.origPayloadOffset(), smta.origPayloadLength());
+        return smta.tryExpand(full ? 4 : 0);
+    }
+
     private static void parseTrak(Moov m, Mp4Box trak) {
         if (!trak.tryExpand(0)) {
             m.corruptTables = "trak";
             return;
+        }
+        // track-level Keys (QuickTime style without version/flags on iPhones; both styles accepted)
+        QtKeysMeta trakKeys = null;
+        boolean foreignMeta = false;
+        for (Mp4Box c : trak.children) {
+            if (!"meta".equals(c.type)) continue;
+            if (!QtKeysMeta.expandMeta(c) || !QtKeysMeta.MDTA.equals(QtKeysMeta.handler(c))) {
+                foreignMeta = true;
+                continue;
+            }
+            try {
+                QtKeysMeta k = QtKeysMeta.open(c);
+                m.trakKeys.add(k);
+                m.trakKeysParent.add(trak);
+                if (trakKeys == null) trakKeys = k;
+            } catch (UnsupportedFormatException e) {
+                foreignMeta = true;
+            }
         }
         Mp4Box mdia = trak.child("mdia");
         if (mdia == null) return;
@@ -225,7 +282,12 @@ public final class Mp4Editor {
         Mp4Box hdlr = mdia.child("hdlr");
         if (m.firstVideoTkhd == null && hdlr != null) {
             byte[] hp = hdlr.payloadBytes();
-            if (hp.length >= 12 && "vide".equals(ByteUtils.fourcc(hp, 8))) m.firstVideoTkhd = trak.child("tkhd");
+            if (hp.length >= 12 && "vide".equals(ByteUtils.fourcc(hp, 8))) {
+                m.firstVideoTkhd = trak.child("tkhd");
+                m.firstVideoTrak = trak;
+                m.videoTrakKeys = trakKeys;
+                m.videoTrakForeignMeta = foreignMeta;
+            }
         }
         Mp4Box minf = mdia.child("minf");
         if (minf == null) return;
@@ -450,6 +512,9 @@ public final class Mp4Editor {
 
     private static void applyMetadata(Moov m, EditSpec spec, EditReport report) {
         String[] values = {spec.make, spec.model, spec.software};
+        Mp4BrandPolicy policy = new Mp4BrandPolicy(spec);
+        // device names found before any change (to recognise a 3GPP 'auth' naming the original device)
+        List<String> oldIdentity = oldIdentity(m);
 
         // ---- QuickTime Keys (moov/meta 'mdta')
         boolean wantCreate = false;
@@ -477,14 +542,33 @@ public final class Mp4Editor {
                 m.keys = QtKeysMeta.create(m.root);
             }
         }
-        if (m.keys != null) editKeys(m.keys, values, spec.removeMakerNote, true, report);
-        for (QtKeysMeta k : m.udtaKeys) editKeys(k, values, spec.removeMakerNote, false, report);
+        if (m.keys != null) editKeys(m.keys, policy, "Keys", true, report);
+        for (QtKeysMeta k : m.udtaKeys) editKeys(k, policy, "Keys/udta", false, report);
+        List<Integer> emptied = new ArrayList<Integer>();
+        for (int i = 0; i < m.trakKeys.size(); i++) {
+            QtKeysMeta k = m.trakKeys.get(i);
+            int before = k.count();
+            editKeys(k, policy, "Keys/trak", false, report);
+            if (before > 0 && k.isEmpty()) emptied.add(i);
+        }
+        for (int j = emptied.size() - 1; j >= 0; j--) {
+            // this edit removed the last track-level key: drop the now empty 'meta'
+            int i = emptied.get(j);
+            QtKeysMeta k = m.trakKeys.remove(i);
+            m.trakKeysParent.remove(i).removeChild(k.meta);
+            if (m.videoTrakKeys == k) m.videoTrakKeys = null;
+        }
+        createTrackLens(m, policy, report);
 
         // ---- iTunes-style ilst items
         for (Mp4Box meta : m.itunesMetas) editItunes(meta, values, report);
 
-        // ---- QuickTime user data text atoms
-        if (!m.udtaUnreadable) editUserData(m, values, report);
+        // ---- QuickTime / 3GPP user data atoms, Samsung 'smta'
+        if (!m.udtaUnreadable) {
+            editUserData(m, values, report);
+            editSamsungModel(m, policy, report);
+            editAuthors(m, policy, oldIdentity, report);
+        }
 
         // drop a user-data box that this edit emptied
         if (m.udta != null && m.udta.isContainer() && m.udta.modified && m.udta.children.isEmpty()) {
@@ -493,64 +577,174 @@ public final class Mp4Editor {
         }
     }
 
-    private static boolean keyMatches(String name, int field) {
-        String n = name.toLowerCase(Locale.US);
-        if (n.equals(KEY_PREFIX + KEY_SUFFIX[field])) return true;
-        if (field == 0) return n.endsWith(".make") || n.endsWith(".manufacturer");
-        if (field == 1) return n.endsWith(".model");
-        return false;
-    }
-
-    private static void editKeys(QtKeysMeta k, String[] values, boolean removeAndroidVersion, boolean primary,
+    /**
+     * Applies {@link Mp4BrandPolicy} to every key of one 'mdta' table; the primary table (moov/meta)
+     * also gets the standard (and, for non-Apple targets, com.android.*) keys that are missing.
+     */
+    private static void editKeys(QtKeysMeta k, Mp4BrandPolicy policy, String where, boolean primary,
                                  EditReport report) {
-        String where = primary ? "Keys" : "Keys/udta";
-        for (int f = 0; f < values.length; f++) {
-            String v = values[f];
-            if (v == null) continue;
-            String std = KEY_PREFIX + KEY_SUFFIX[f];
-            List<Integer> idx = new ArrayList<Integer>();
-            for (int i = 1; i <= k.count(); i++) {
-                if (keyMatches(k.name(i), f)) idx.add(i);
-            }
-            if (v.length() == 0) {
-                for (int j = idx.size() - 1; j >= 0; j--) {
-                    int i = idx.get(j);
-                    String name = k.name(i);
-                    String old = k.value(i);
-                    k.remove(i);
-                    report.change("Video " + FIELD[f] + " (" + label(where, name, std) + "): "
-                            + show(old) + " → " + REMOVED);
+        boolean[] present = new boolean[Mp4BrandPolicy.PROTECTED + 1];
+        List<Integer> removals = new ArrayList<Integer>();
+        for (int i = 1; i <= k.count(); i++) {
+            String name = k.name(i);
+            int kind = Mp4BrandPolicy.classify(name);
+            present[kind] = true;
+            String target = policy.target(kind);
+            if (target == null) continue;
+            String old = k.value(i);
+            String field = Mp4BrandPolicy.field(kind);
+            if (target.length() == 0) {
+                removals.add(i);
+                if (kind == Mp4BrandPolicy.ANDROID_VERSION) {
+                    report.change("com.android.version anahtarı kaldırıldı");
+                } else if (policy.isTraceRemoval(kind)) {
+                    report.change(TRACE + " (" + where + ": " + name + "): " + show(old));
+                } else {
+                    report.change("Video " + field + " (" + keyLabel(kind, where, name) + "): " + show(old)
+                            + " → " + REMOVED);
                 }
-                continue;
-            }
-            boolean hasStd = false;
-            for (int i : idx) {
-                String name = k.name(i);
-                if (name.equals(std)) hasStd = true;
-                String old = k.value(i);
-                if (v.equals(old)) continue;
-                k.setValue(i, v);
-                report.change("Video " + FIELD[f] + " (" + label(where, name, std) + "): " + show(old)
-                        + " → " + v);
-            }
-            if (primary && !hasStd) {
-                k.add(std, v);
-                report.change("Video " + FIELD[f] + " (" + where + "): " + NONE + " → " + v);
+            } else if (!target.equals(old)) {
+                k.setValue(i, target);
+                report.change("Video " + field + " (" + keyLabel(kind, where, name) + "): " + show(old) + " → "
+                        + target);
             }
         }
-        if (removeAndroidVersion) {
-            for (int i = k.count(); i >= 1; i--) {
-                if (KEY_ANDROID_VERSION.equals(k.name(i))) {
-                    k.remove(i);
-                    report.change("com.android.version anahtarı kaldırıldı");
-                }
+        for (int j = removals.size() - 1; j >= 0; j--) k.remove(removals.get(j));
+        if (primary) {
+            for (int kind : CREATED_KINDS) {
+                if (present[kind]) continue;
+                String v = policy.create(kind);
+                if (v == null) continue;
+                String name = Mp4BrandPolicy.keyName(kind);
+                k.add(name, v);
+                report.change("Video " + Mp4BrandPolicy.field(kind) + " (" + keyLabel(kind, where, name) + "): "
+                        + NONE + " → " + v);
             }
         }
         k.commit();
     }
 
-    private static String label(String where, String name, String std) {
-        return name.equals(std) ? where : where + ": " + name;
+    private static String keyLabel(int kind, String where, String name) {
+        boolean std = kind == Mp4BrandPolicy.STD_MAKE || kind == Mp4BrandPolicy.STD_MODEL
+                || kind == Mp4BrandPolicy.STD_SOFTWARE;
+        return std ? where : where + ": " + name;
+    }
+
+    /** 1-based index of the first key of this kind, or 0. */
+    private static int findKind(QtKeysMeta k, int kind) {
+        for (int i = 1; i <= k.count(); i++) {
+            if (Mp4BrandPolicy.classify(k.name(i)) == kind) return i;
+        }
+        return 0;
+    }
+
+    /**
+     * Apple target with a lens model: adds com.apple.quicktime.camera.lens_model to the first video
+     * track (QuickTime-style trak/meta, as iPhones write it) when no key table holds one.
+     */
+    private static void createTrackLens(Moov m, Mp4BrandPolicy policy, EditReport report) {
+        String lens = policy.createLens();
+        if (lens == null || m.firstVideoTrak == null) return;
+        for (QtKeysMeta k : m.allKeys()) {
+            if (findKind(k, Mp4BrandPolicy.APPLE_LENS) > 0) return;
+        }
+        QtKeysMeta k = m.videoTrakKeys;
+        if (k == null) {
+            if (m.videoTrakForeignMeta) return;
+            k = QtKeysMeta.create(m.firstVideoTrak);
+            m.videoTrakKeys = k;
+            m.trakKeys.add(k);
+            m.trakKeysParent.add(m.firstVideoTrak);
+        }
+        k.add(Mp4BrandPolicy.KEY_APPLE_LENS, lens);
+        k.commit();
+        report.change("Video LensModel (Keys/trak): " + NONE + " → " + lens);
+    }
+
+    /** Samsung moov/udta/smta/'mdln' (model code, exiftool "SamsungModel"). */
+    private static void editSamsungModel(Moov m, Mp4BrandPolicy policy, EditReport report) {
+        String target = policy.samsungModelTarget();
+        if (target == null) return;
+        for (Mp4Box smta : m.smtas) {
+            for (Mp4Box mdln : smta.childrenOf("mdln")) {
+                byte[] p = mdln.payloadBytes();
+                String old = QtData.decodeRawText(p);
+                if (target.length() == 0) {
+                    smta.removeChild(mdln);
+                    if (policy.removeTraces) report.change(TRACE + " (UserData: smta/mdln): " + show(old));
+                    else report.change("Video Model (UserData: smta/mdln): " + show(old) + " → " + REMOVED);
+                } else if (!target.equals(old)) {
+                    mdln.setPayload(QtData.encodeRawText(p, target));
+                    report.change("Video Model (UserData: smta/mdln): " + show(old) + " → " + target);
+                }
+            }
+        }
+    }
+
+    /** 3GPP moov/udta/'auth' whose text names the original device (newer Samsung firmware). */
+    private static void editAuthors(Moov m, Mp4BrandPolicy policy, List<String> oldIdentity, EditReport report) {
+        String target = policy.authorTarget();
+        if (target == null || m.udta == null || !m.udta.isContainer() || oldIdentity.isEmpty()) return;
+        for (Mp4Box a : m.udta.childrenOf("auth")) {
+            byte[] p = a.payloadBytes();
+            String old = QtData.decode3gppText(p);
+            if (old == null || !mentions(old, oldIdentity)) continue;
+            if (target.length() == 0) {
+                m.udta.removeChild(a);
+                if (policy.removeTraces) report.change(TRACE + " (UserData: auth): " + old);
+                else report.change("Video Author (UserData: auth): " + old + " → " + REMOVED);
+            } else if (!target.equals(old)) {
+                a.setPayload(QtData.encode3gppText(p, target));
+                report.change("Video Author (UserData: auth): " + old + " → " + target);
+            }
+        }
+    }
+
+    /**
+     * Lower-case make/model values the file names before the edit (all key tables, user data, smta,
+     * iTunes items); "galaxy" is added for Samsung files (their 'auth' holds the marketing name).
+     */
+    private static List<String> oldIdentity(Moov m) {
+        List<String> r = new ArrayList<String>();
+        for (QtKeysMeta k : m.allKeys()) {
+            for (int i = 1; i <= k.count(); i++) {
+                int kind = Mp4BrandPolicy.classify(k.name(i));
+                if (Mp4BrandPolicy.isMakeKind(kind) || Mp4BrandPolicy.isModelKind(kind)) addIdentity(r, k.value(i));
+            }
+        }
+        if (m.udta != null && m.udta.isContainer() && !m.udtaUnreadable) {
+            for (int f = 0; f < 2; f++) {
+                for (String t : UDTA_ATOMS[f]) {
+                    for (Mp4Box a : m.udta.childrenOf(t)) addIdentity(r, QtData.decodeText(a.payloadBytes()));
+                }
+            }
+        }
+        for (Mp4Box smta : m.smtas) {
+            for (Mp4Box mdln : smta.childrenOf("mdln")) addIdentity(r, QtData.decodeRawText(mdln.payloadBytes()));
+        }
+        for (Mp4Box meta : m.itunesMetas) {
+            Mp4Box ilst = meta.child("ilst");
+            if (ilst == null || !ilst.isContainer()) continue;
+            for (int f = 0; f < 2; f++) {
+                for (Mp4Box item : ilst.childrenOf(ILST_ATOMS[f])) addIdentity(r, QtData.itemValue(item));
+            }
+        }
+        if (!m.smtas.isEmpty() || r.contains("samsung")) addIdentity(r, "galaxy");
+        return r;
+    }
+
+    private static void addIdentity(List<String> list, String s) {
+        if (s == null) return;
+        String t = s.trim().toLowerCase(Locale.US);
+        if (t.length() >= 2 && !list.contains(t)) list.add(t);
+    }
+
+    private static boolean mentions(String text, List<String> identity) {
+        String t = text.toLowerCase(Locale.US);
+        for (String id : identity) {
+            if (t.contains(id)) return true;
+        }
+        return false;
     }
 
     private static String show(String v) {
@@ -641,23 +835,28 @@ public final class Mp4Editor {
             }
         }
 
-        // device identity: Keys first, then udta Keys, udta text atoms, iTunes items
+        // device identity: Keys com.apple.quicktime.* -> Keys com.android.manufacturer/model ->
+        // udta ©mak/©mod -> Samsung smta/mdln (model) -> iTunes items
         String[] found = new String[3];
         List<QtKeysMeta> keyMetas = new ArrayList<QtKeysMeta>();
         if (m.keys != null) keyMetas.add(m.keys);
         keyMetas.addAll(m.udtaKeys);
+        int[] androidKind = {Mp4BrandPolicy.ANDROID_MAKE, Mp4BrandPolicy.ANDROID_MODEL};
         boolean location = false;
         boolean locationZero = true;
         for (QtKeysMeta k : keyMetas) {
             for (int f = 0; f < 3; f++) {
-                if (found[f] != null) continue;
-                int i = k.find(KEY_PREFIX + KEY_SUFFIX[f]);
-                if (i > 0) found[f] = nonEmpty(k.value(i));
+                if (found[f] == null) found[f] = keyValue(k, STD_KIND[f]);
             }
-            int li = k.find("com.apple.quicktime.location.ISO6709");
+            int li = k.find(KEY_LOCATION);
             if (li > 0) {
                 location = true;
                 if (!isZeroLocation(k.value(li))) locationZero = false;
+            }
+        }
+        for (QtKeysMeta k : keyMetas) {
+            for (int f = 0; f < 2; f++) {
+                if (found[f] == null) found[f] = keyValue(k, androidKind[f]);
             }
         }
         if (m.udta != null && m.udta.isContainer()) {
@@ -674,6 +873,10 @@ public final class Mp4Editor {
                 if (!isZeroLocation(QtData.decodeText(xyz.payloadBytes()))) locationZero = false;
             }
         }
+        for (Mp4Box smta : m.smtas) {
+            Mp4Box mdln = smta.child("mdln");
+            if (mdln != null && found[1] == null) found[1] = nonEmpty(QtData.decodeRawText(mdln.payloadBytes()));
+        }
         List<Mp4Box> itunes = new ArrayList<Mp4Box>(m.itunesMetas);
         if (m.moovItunesMeta != null) itunes.add(m.moovItunesMeta);
         for (Mp4Box meta : itunes) {
@@ -688,7 +891,23 @@ public final class Mp4Editor {
         info.make = found[0];
         info.model = found[1];
         info.software = found[2];
+        // lens: track-level key first (where iPhones write it), then moov-level tables
+        List<QtKeysMeta> lensMetas = new ArrayList<QtKeysMeta>(m.trakKeys);
+        lensMetas.addAll(keyMetas);
+        for (QtKeysMeta k : lensMetas) {
+            if (info.lensModel == null) info.lensModel = keyValue(k, Mp4BrandPolicy.APPLE_LENS);
+        }
         info.gpsStatus = !location ? "yok" : (locationZero ? "maskelenmiş" : "var");
+    }
+
+    /** Trimmed value of the first non-empty key of this kind, or null. */
+    private static String keyValue(QtKeysMeta k, int kind) {
+        for (int i = 1; i <= k.count(); i++) {
+            if (Mp4BrandPolicy.classify(k.name(i)) != kind) continue;
+            String v = nonEmpty(k.value(i));
+            if (v != null) return v;
+        }
+        return null;
     }
 
     private static String nonEmpty(String s) {

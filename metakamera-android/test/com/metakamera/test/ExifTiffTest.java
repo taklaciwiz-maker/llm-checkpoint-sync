@@ -215,6 +215,8 @@ public final class ExifTiffTest {
         boolean shareMakeWithLensMake;
         byte[] icc;
         List<Ent> extraIfd0 = new ArrayList<Ent>();
+        List<Ent> extraExif = new ArrayList<Ent>();
+        List<Ent> extraIfd1 = new ArrayList<Ent>();
     }
 
     /** Built fixture plus the offsets the tests check. */
@@ -283,6 +285,7 @@ public final class ExifTiffTest {
             Ent lensMake = null;
             if (o.lensMake != null) ex.add(lensMake = ascii(0xA433, o.lensMake));
             if (o.lensModel != null) ex.add(ascii(0xA434, o.lensModel));
+            ex.addAll(o.extraExif);
             Collections.sort(ex, BY_TAG);
             if (o.shareMakeWithLensMake && lensMake != null) {
                 Ent mk = null;
@@ -335,6 +338,8 @@ public final class ExifTiffTest {
             Ent jif = new Ent(0x0201, LONG, 1, t.lg(0));
             i1.add(jif);
             i1.add(new Ent(0x0202, LONG, 1, t.lg(th.length)));
+            i1.addAll(o.extraIfd1);
+            Collections.sort(i1, BY_TAG);
             int p = t.writeIfd(i1);
             t.put32(ifd0Next, p);
             fx.thumbPos = t.align();
@@ -1093,6 +1098,499 @@ public final class ExifTiffTest {
     }
 
     // =====================================================================================
+    // Tests: original-brand traces beyond the MakerNote (removeMakerNote = "remove brand traces")
+    // =====================================================================================
+
+    /** UCS-2 text, optionally followed by the 2-byte NUL terminator (XP* tags: always little-endian). */
+    static byte[] ucs2(String s, boolean le, boolean terminator) {
+        byte[] r = new byte[(s.length() + (terminator ? 1 : 0)) * 2];
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            r[2 * i + (le ? 0 : 1)] = (byte) c;
+            r[2 * i + (le ? 1 : 0)] = (byte) (c >> 8);
+        }
+        return r;
+    }
+
+    static Ent xp(int tag, String s) {
+        byte[] b = ucs2(s, true, true);
+        return new Ent(tag, BYTE, b.length, b);
+    }
+
+    /** UserComment with an EXIF character-code header ("ASCII" / "UNICODE" in the EXIF byte order) or none (null). */
+    static Ent userComment(String code, String text, boolean le) {
+        byte[] body = "UNICODE".equals(code) ? ucs2(text, le, false) : text.getBytes(StandardCharsets.UTF_8);
+        byte[] v;
+        if (code == null) {
+            v = body;
+        } else {
+            v = new byte[8 + body.length];
+            byte[] id = code.getBytes(StandardCharsets.US_ASCII);
+            System.arraycopy(id, 0, v, 0, id.length);
+            System.arraycopy(body, 0, v, 8, body.length);
+        }
+        return new Ent(0x9286, UNDEF, v.length, v);
+    }
+
+    /** The (out-of-line) value bytes of {@code e} were zero-filled in place. */
+    static void zeroed(byte[] out, Ent e, String what) {
+        T.check(e.data.length > 4 && e.dataPos > 0, what + ": fixture value must be out of line");
+        for (int i = 0; i < e.data.length; i++) {
+            T.check(out[e.dataPos + i] == 0, what + ": not zero-filled at +" + i);
+        }
+    }
+
+    /** The (out-of-line) value bytes of {@code e} are unchanged at their original offset. */
+    static void intact(byte[] out, Ent e, String what) {
+        T.check(e.data.length > 4 && e.dataPos > 0, what + ": fixture value must be out of line");
+        T.check(Arrays.equals(e.data, Arrays.copyOfRange(out, e.dataPos, e.dataPos + e.data.length)), what + ": bytes changed");
+    }
+
+    static void absentUcs2(byte[] data, String s, String what) {
+        for (boolean le : new boolean[]{true, false}) {
+            int i = indexOf(data, ucs2(s, le, false));
+            T.check(i < 0, what + ": UTF-16" + (le ? "LE" : "BE") + " \"" + s + "\" must not survive (found at " + i + ")");
+        }
+    }
+
+    static boolean hasChangeContaining(EditReport r, String text) {
+        for (String c : r.changes) if (c.contains(text)) return true;
+        return false;
+    }
+
+    static final String TRACE = " kaldırıldı (eski marka bilgisi)";
+
+    /** Xiaomi fixture: every vendor-only tag of the exiftool table + an unrelated UserComment. */
+    static Opt xiaomiOpt(boolean le, List<Ent> outOfLine) {
+        Opt o = opt(le);
+        o.make = "Xiaomi";
+        o.model = "2211133C";
+        o.software = "V816.0.5.0.UMCMIXM";
+        o.lensModel = null;
+        TB t = new TB(le);
+        Ent settings = ascii(0x9999, "{\"AIEnable\":false,\"Mirror\":false,\"Sensor\":\"Rear\",\"Hdr\":\"normal\",\"OpMode\":36865}");
+        Ent model = ascii(0x9A00, "Xiaomi 13");
+        byte[] blob = new byte[2048];
+        for (int i = 0; i < blob.length; i++) blob[i] = (byte) (0x40 + i % 23);
+        System.arraycopy("XMBLOB-SECRET".getBytes(StandardCharsets.US_ASCII), 0, blob, 0, 13);
+        Ent b9aaa = new Ent(0x9AAA, BYTE, blob.length, blob);
+        Ent a661 = ascii(0xA661, "XMA661-SECRET");
+        Ent p8889 = ascii(0x8889, "portrait");
+        o.extraExif.add(settings);
+        o.extraExif.add(model);
+        o.extraExif.add(b9aaa);
+        o.extraExif.add(a661);
+        o.extraExif.add(p8889);
+        o.extraExif.add(new Ent(0x8891, SHORT, 1, t.sh(35)));
+        o.extraExif.add(new Ent(0x889A, SHORT, 1, t.sh(0)));
+        o.extraExif.add(userComment("ASCII", "Dogum gunu partisi", le)); // unrelated: must survive
+        o.extraIfd0.add(new Ent(0x0220, LONG, 1, t.lg(0)));
+        o.extraIfd0.add(new Ent(0x0224, LONG, 1, t.lg(1)));
+        o.extraIfd0.add(ascii(0x0225, ""));
+        if (outOfLine != null) {
+            outOfLine.add(settings);
+            outOfLine.add(model);
+            outOfLine.add(b9aaa);
+            outOfLine.add(a661);
+            outOfLine.add(p8889);
+        }
+        return o;
+    }
+
+    static final int[] XIAOMI_EXIF_TAGS = {0x8889, 0x8891, 0x889A, 0x9999, 0x9A00, 0x9AAA, 0xA661};
+    static final int[] XIAOMI_IFD0_TAGS = {0x0220, 0x0224, 0x0225};
+
+    public static void testXiaomiVendorTagsRemovedLE() throws Exception {
+        xiaomiTraces(true);
+    }
+
+    public static void testXiaomiVendorTagsRemovedBE() throws Exception {
+        xiaomiTraces(false);
+    }
+
+    private static void xiaomiTraces(boolean le) throws Exception {
+        String tag = le ? "le" : "be";
+        List<Ent> ool = new ArrayList<Ent>();
+        Fx fx = build(xiaomiOpt(le, ool));
+        File before = jpeg("xiaomi-" + tag + "-in.jpg", fx.tiff);
+        Map<String, String> m0 = T.exif(before);
+        T.eq("Xiaomi 13", m0.get("ExifIFD:XiaomiModel"), "fixture: exiftool reads XiaomiModel");
+        T.eq("Rear", m0.get("JSON:Sensor"), "fixture: exiftool reads the XiaomiSettings JSON");
+
+        EditReport rep = new EditReport();
+        byte[] out = edit(fx.tiff, T.appleSpec(), rep);
+        File after = jpeg("xiaomi-" + tag + "-out.jpg", out);
+        Map<String, String> m = T.exif(after);
+        for (String k : m.keySet()) {
+            T.check(!k.startsWith("JSON:") && !k.contains("Xiaomi"), "xiaomi tag survived: " + k + "=" + m.get(k));
+        }
+        T.eq("Dogum gunu partisi", m.get("ExifIFD:UserComment"), "unrelated UserComment kept");
+        T.eq("Apple", m.get("IFD0:Make"), "make");
+        T.eq("iPhone 17 Pro Max", m.get("IFD0:Model"), "model");
+        T.eq("41 deg 0' 0.00\"", m.get("GPS:GPSLatitude"), "gps");
+        T.check(Arrays.equals(fx.thumb, exiftoolThumbnail(after)), "thumbnail preserved");
+        assertNoNewWarnings(before, after);
+
+        TR tr = new TR(out);
+        for (int t : XIAOMI_EXIF_TAGS) T.eq(-1, tr.entry(tr.exif(), t), "Exif IFD entry gone: 0x" + Integer.toHexString(t));
+        for (int t : XIAOMI_IFD0_TAGS) T.eq(-1, tr.entry(tr.ifd0(), t), "IFD0 entry gone: 0x" + Integer.toHexString(t));
+        for (Ent e : ool) zeroed(out, e, "vendor tag 0x" + Integer.toHexString(e.tag));
+        absent(out, "Xiaomi", "make / XiaomiModel");
+        absent(out, "2211133C", "model");
+        absent(out, "AIEnable", "XiaomiSettings");
+        absent(out, "XMBLOB", "0x9AAA blob");
+        absent(out, "XMA661", "0xA661");
+        absent(out, "portrait", "0x8889");
+        present(out, "Dogum gunu partisi", "unrelated comment");
+        // append-only: nothing that exists moved
+        T.eq((long) fx.gpsPos, tr.field(tr.ifd0(), 0x8825), "gps ifd not moved");
+        T.eq((long) fx.thumbPos, tr.field(tr.ifd1(), 0x0201), "thumbnail not moved");
+
+        T.check(hasChange(rep, "EXIF XiaomiSettings kaldırıldı"), "report settings: " + rep);
+        T.check(hasChange(rep, "EXIF XiaomiModel kaldırıldı"), "report model: " + rep);
+        T.check(hasChange(rep, "EXIF Xiaomi etiketleri kaldırıldı: 0x0220, 0x0224, 0x0225, 0x8889, 0x8891, 0x889A, 0x9AAA, 0xA661"),
+                "report unnamed: " + rep);
+        T.check(!hasChangeContaining(rep, "UserComment"), "unrelated comment not reported: " + rep);
+        T.check(hasChange(rep, "MakerNote temizlendi (VNDRNOTE)"), "makernote: " + rep);
+        T.eq(0, rep.warnings.size(), "warnings " + rep);
+
+        EditReport rep2 = new EditReport();
+        T.check(edit(out, T.appleSpec(), rep2) == out, "idempotent: " + rep2);
+
+        // compacting fallback (size limit below the append result): the traces are not re-serialized
+        EditReport rc = new EditReport();
+        byte[] compact = ExifTiff.edit(fx.tiff, T.appleSpec(), fx.tiff.length - 1, rc);
+        T.check(hasWarningContaining(rc, "yeniden düzenlendi"), "compacted " + rc);
+        TR tc = new TR(compact);
+        for (int t : XIAOMI_EXIF_TAGS) T.eq(-1, tc.entry(tc.exif(), t), "compacted: gone 0x" + Integer.toHexString(t));
+        for (int t : XIAOMI_IFD0_TAGS) T.eq(-1, tc.entry(tc.ifd0(), t), "compacted: gone 0x" + Integer.toHexString(t));
+        absent(compact, "Xiaomi", "compacted");
+        absent(compact, "XMBLOB", "compacted");
+        absent(compact, "AIEnable", "compacted");
+        present(compact, "Dogum gunu partisi", "compacted: unrelated comment kept");
+        assertNoNewWarnings(before, jpeg("xiaomi-" + tag + "-compact.jpg", compact));
+
+        // only the brand-trace option: the old Make stays, every vendor tag goes, the comment stays
+        EditReport ro = new EditReport();
+        byte[] only = edit(fx.tiff, nullSpecWithMakerNoteRemoval(), ro);
+        T.eq(4, ro.changes.size(), "makernote + 2 named + 1 group: " + ro);
+        TR to = new TR(only);
+        T.eq("Xiaomi", to.str(to.ifd0(), 0x010F), "make kept");
+        for (int t : XIAOMI_EXIF_TAGS) T.eq(-1, to.entry(to.exif(), t), "gone (traces only): 0x" + Integer.toHexString(t));
+        T.check(to.entry(to.exif(), 0x9286) > 0, "comment kept (traces only)");
+
+        // removeMakerNote = false: every vendor tag survives byte-identical at its offset
+        EditSpec keep = T.appleSpec();
+        keep.removeMakerNote = false;
+        EditReport rk = new EditReport();
+        byte[] kept = edit(fx.tiff, keep, rk);
+        TR tk = new TR(kept);
+        for (int t : XIAOMI_EXIF_TAGS) T.check(tk.entry(tk.exif(), t) > 0, "kept: 0x" + Integer.toHexString(t));
+        for (int t : XIAOMI_IFD0_TAGS) T.check(tk.entry(tk.ifd0(), t) > 0, "kept: 0x" + Integer.toHexString(t));
+        for (Ent e : ool) intact(kept, e, "kept vendor tag 0x" + Integer.toHexString(e.tag));
+        T.eq("Xiaomi 13", T.exif(jpeg("xiaomi-" + tag + "-keep.jpg", kept)).get("ExifIFD:XiaomiModel"), "exiftool XiaomiModel kept");
+        T.check(!hasChangeContaining(rk, "EXIF Xiaomi"), "nothing reported: " + rk);
+        T.check(!hasChangeContaining(rk, "MakerNote"), "makernote kept: " + rk);
+    }
+
+    /** HUAWEI fixture with brand-bearing and unrelated free-text tags in IFD0, the Exif IFD and IFD1. */
+    static final class TextFx {
+        Fx fx;
+        final List<Ent> removed = new ArrayList<Ent>();
+        final List<Ent> kept = new ArrayList<Ent>();
+    }
+
+    static TextFx brandTextFixture(boolean le) throws IOException {
+        TextFx t = new TextFx();
+        Opt o = opt(le); // HUAWEI / ALN-AL00
+        o.ifd1MakeModel = true;
+        Ent desc = ascii(0x010E, "Shot on aln-al00 night mode");     // old model, other case
+        Ent xpComment = xp(0x9C9C, "HUAWEI XMAGE");                    // old make
+        Ent xpKeywords = xp(0x9C9E, "deniz;huawei;tatil");             // old make, lower case
+        Ent xpSubject = xp(0x9C9F, "Tatil 2025");                      // unrelated
+        Ent xpTitle = xp(0x9C9B, "Gün batımı");                        // unrelated
+        Ent uc = userComment("UNICODE", "Çekim: HUAWEI P60 Pro", le);  // UTF-16 in the EXIF byte order
+        Ent desc1 = ascii(0x010E, "ALN-AL00 thumbnail");               // IFD1
+        o.extraIfd0.add(desc);
+        o.extraIfd0.add(xpComment);
+        o.extraIfd0.add(xpKeywords);
+        o.extraIfd0.add(xpSubject);
+        o.extraIfd0.add(xpTitle);
+        o.extraExif.add(uc);
+        o.extraIfd1.add(desc1);
+        t.fx = build(o);
+        t.removed.add(desc);
+        t.removed.add(xpComment);
+        t.removed.add(xpKeywords);
+        t.removed.add(uc);
+        t.removed.add(desc1);
+        t.kept.add(xpSubject);
+        t.kept.add(xpTitle);
+        return t;
+    }
+
+    public static void testBrandTextTagsRemovedLE() throws Exception {
+        brandTexts(true);
+    }
+
+    public static void testBrandTextTagsRemovedBE() throws Exception {
+        brandTexts(false);
+    }
+
+    private static void brandTexts(boolean le) throws Exception {
+        String tag = le ? "le" : "be";
+        TextFx tx = brandTextFixture(le);
+        Fx fx = tx.fx;
+        File before = jpeg("brandtext-" + tag + "-in.jpg", fx.tiff);
+        Map<String, String> m0 = T.exif(before);
+        T.eq("HUAWEI XMAGE", m0.get("IFD0:XPComment"), "fixture XPComment");
+        T.eq("Çekim: HUAWEI P60 Pro", m0.get("ExifIFD:UserComment"), "fixture UNICODE UserComment");
+        T.eq("ALN-AL00 thumbnail", m0.get("IFD1:ImageDescription"), "fixture IFD1 description");
+
+        EditReport rep = new EditReport();
+        byte[] out = edit(fx.tiff, T.appleSpec(), rep);
+        File after = jpeg("brandtext-" + tag + "-out.jpg", out);
+        Map<String, String> m = T.exif(after);
+        T.eq(null, m.get("IFD0:ImageDescription"), "description removed");
+        T.eq(null, m.get("IFD0:XPComment"), "XPComment removed");
+        T.eq(null, m.get("IFD0:XPKeywords"), "XPKeywords removed");
+        T.eq(null, m.get("ExifIFD:UserComment"), "UserComment removed");
+        T.eq(null, m.get("IFD1:ImageDescription"), "IFD1 description removed");
+        T.eq("Tatil 2025", m.get("IFD0:XPSubject"), "unrelated XPSubject kept");
+        T.eq("Gün batımı", m.get("IFD0:XPTitle"), "unrelated XPTitle kept");
+        T.eq("Apple", m.get("IFD1:Make"), "IFD1 make updated");
+        T.eq("iPhone 17 Pro Max", m.get("IFD1:Model"), "IFD1 model updated");
+        T.check(Arrays.equals(fx.thumb, exiftoolThumbnail(after)), "thumbnail preserved");
+        assertNoNewWarnings(before, after);
+
+        for (Ent e : tx.removed) zeroed(out, e, "removed 0x" + Integer.toHexString(e.tag));
+        for (Ent e : tx.kept) intact(out, e, "kept 0x" + Integer.toHexString(e.tag));
+        absent(out, "HUAWEI", "old make");
+        absent(out, "ALN-AL00", "old model");
+        absent(out, "aln-al00", "old model (lower case)");
+        absentUcs2(out, "HUAWEI", "old make (UTF-16)");
+        absentUcs2(out, "huawei", "old make (UTF-16, lower case)");
+
+        T.check(hasChange(rep, "EXIF ImageDescription" + TRACE), "rep desc " + rep);
+        T.check(hasChange(rep, "EXIF XPComment" + TRACE), "rep xpcomment " + rep);
+        T.check(hasChange(rep, "EXIF XPKeywords" + TRACE), "rep xpkeywords " + rep);
+        T.check(hasChange(rep, "EXIF UserComment" + TRACE), "rep usercomment " + rep);
+        T.check(hasChange(rep, "EXIF IFD1 ImageDescription" + TRACE), "rep ifd1 desc " + rep);
+        T.check(!hasChangeContaining(rep, "XPSubject") && !hasChangeContaining(rep, "XPTitle"), "unrelated not reported " + rep);
+        T.check(hasChange(rep, "EXIF IFD1 Make: HUAWEI → Apple"), "ifd1 make " + rep);
+        T.check(hasChange(rep, "EXIF IFD1 Model: ALN-AL00 → iPhone 17 Pro Max"), "ifd1 model " + rep);
+        T.eq(11 + 2 + 5, rep.changes.size(), "number of changes " + rep);
+        T.eq(0, rep.warnings.size(), "warnings " + rep);
+
+        EditReport rep2 = new EditReport();
+        T.check(edit(out, T.appleSpec(), rep2) == out, "idempotent " + rep2);
+
+        // removeMakerNote = false: no text tag is touched, not even brand-bearing ones
+        EditSpec keep = T.appleSpec();
+        keep.removeMakerNote = false;
+        EditReport rk = new EditReport();
+        byte[] k = edit(fx.tiff, keep, rk);
+        for (Ent e : tx.removed) intact(k, e, "kept without the option 0x" + Integer.toHexString(e.tag));
+        for (Ent e : tx.kept) intact(k, e, "kept 0x" + Integer.toHexString(e.tag));
+        Map<String, String> mk = T.exif(jpeg("brandtext-" + tag + "-keep.jpg", k));
+        T.eq("HUAWEI XMAGE", mk.get("IFD0:XPComment"), "XPComment kept");
+        T.eq("Çekim: HUAWEI P60 Pro", mk.get("ExifIFD:UserComment"), "UserComment kept");
+        T.eq("ALN-AL00 thumbnail", mk.get("IFD1:ImageDescription"), "IFD1 description kept");
+        T.check(!hasChangeContaining(rk, "eski marka"), "nothing reported " + rk);
+    }
+
+    public static void testUnrelatedTextsSurvive() throws Exception {
+        for (boolean le : new boolean[]{true, false}) {
+            // texts that do not name the old brand (one only names the NEW one) survive untouched
+            Opt o = opt(le);
+            Ent uc = userComment("ASCII", "Dogum gunu partisi", le);
+            Ent ucu = userComment("UNICODE", "Doğum günü", le);
+            Ent desc = ascii(0x010E, "Apple fan club meeting");
+            Ent xpc = xp(0x9C9C, "Tatil fotoğrafı");
+            o.extraExif.add(uc);
+            o.extraIfd0.add(ucu); // non-standard place, still checked
+            o.extraIfd0.add(desc);
+            o.extraIfd0.add(xpc);
+            Fx fx = build(o);
+            EditReport rep = new EditReport();
+            byte[] out = edit(fx.tiff, T.appleSpec(), rep);
+            Ent[] all = {uc, ucu, desc, xpc};
+            for (Ent e : all) intact(out, e, "unrelated text 0x" + Integer.toHexString(e.tag));
+            TR tr = new TR(out);
+            T.check(tr.entry(tr.exif(), 0x9286) > 0, "UserComment entry kept");
+            T.check(tr.entry(tr.ifd0(), 0x9286) > 0, "IFD0 UserComment entry kept");
+            T.check(tr.entry(tr.ifd0(), 0x010E) > 0, "description entry kept");
+            T.check(tr.entry(tr.ifd0(), 0x9C9C) > 0, "XPComment entry kept");
+            T.check(!hasChangeContaining(rep, "eski marka"), "nothing reported " + rep);
+            Map<String, String> m = T.exif(jpeg("unrelated-" + le + ".jpg", out));
+            T.eq("Dogum gunu partisi", m.get("ExifIFD:UserComment"), "exiftool comment");
+            T.eq("Apple fan club meeting", m.get("IFD0:ImageDescription"), "exiftool description");
+            T.eq("Tatil fotoğrafı", m.get("IFD0:XPComment"), "exiftool XPComment");
+
+            // short old Make ("LGE") only matches as a whole word
+            o = opt(le);
+            o.make = "LGE";
+            o.model = "LM-G900N";
+            Ent college = ascii(0x010E, "college trip 2025");
+            Ent lge = userComment("ASCII", "Photo by LGE-camera", le);
+            o.extraIfd0.add(college);
+            o.extraExif.add(lge);
+            fx = build(o);
+            rep = new EditReport();
+            out = edit(fx.tiff, T.appleSpec(), rep);
+            intact(out, college, "'college' does not contain the word LGE");
+            zeroed(out, lge, "'LGE-camera' names the old make");
+            T.check(hasChange(rep, "EXIF UserComment" + TRACE), "rep " + rep);
+            T.check(!hasChange(rep, "EXIF ImageDescription" + TRACE), "rep " + rep);
+
+            // old Make == new Make (Apple → Apple) is not a trace; the different old Model is
+            o = opt(le);
+            o.make = "Apple";
+            o.model = "iPhone 15 Pro";
+            Ent appleDesc = ascii(0x010E, "Apple ProRAW test");
+            Ent oldModel = userComment("ASCII", "iphone 15 pro gece modu", le);
+            o.extraIfd0.add(appleDesc);
+            o.extraExif.add(oldModel);
+            fx = build(o);
+            rep = new EditReport();
+            out = edit(fx.tiff, T.appleSpec(), rep);
+            intact(out, appleDesc, "same make is not a trace");
+            zeroed(out, oldModel, "old model is a trace");
+            T.check(hasChange(rep, "EXIF UserComment" + TRACE), "rep " + rep);
+            T.check(edit(out, T.appleSpec(), new EditReport()) == out, "idempotent: the new identity is never a trace");
+
+            // no old identity at all (no Make, blank Model): only "oplus_" could match -> nothing to do
+            o = opt(le);
+            o.make = null;
+            o.model = "   ";
+            o.makerNote = false;
+            o.serials = false;
+            o.extraIfd0.add(ascii(0x010E, "HUAWEI P60 tatil"));
+            fx = build(o);
+            T.check(edit(fx.tiff, nullSpecWithMakerNoteRemoval(), new EditReport()) == fx.tiff, "unchanged without old identity");
+        }
+    }
+
+    public static void testOplusFeatureBitsRemoved() throws Exception {
+        for (boolean le : new boolean[]{true, false}) {
+            List<Ent> traces = new ArrayList<Ent>();
+            traces.add(new Ent(0x9286, UNDEF, 13, "oplus_8388608".getBytes(StandardCharsets.US_ASCII))); // no header
+            traces.add(userComment("ASCII", "oplus_131072", le));
+            traces.add(userComment("UNICODE", "oplus_4096", le));
+            traces.add(ascii(0x9286, "  OPLUS_1"));                    // wrong type, padded, upper case
+            traces.add(xp(0x9C9C, "oplus_32"));
+            for (Ent e : traces) {
+                Opt o = opt(le);
+                o.make = "OnePlus";
+                o.model = "CPH2581";
+                if (e.tag == 0x9286) o.extraExif.add(e);
+                else o.extraIfd0.add(e);
+                Fx fx = build(o);
+                EditReport rep = new EditReport();
+                byte[] out = edit(fx.tiff, nullSpecWithMakerNoteRemoval(), rep);
+                String name = e.tag == 0x9286 ? "UserComment" : "XPComment";
+                T.check(hasChange(rep, "EXIF " + name + TRACE), "oplus variant removed (" + le + "): " + rep);
+                TR tr = new TR(out);
+                T.eq(-1, tr.entry(e.tag == 0x9286 ? tr.exif() : tr.ifd0(), e.tag), "entry gone");
+                zeroed(out, e, "oplus bytes");
+                absent(out, "oplus_", "feature bits");
+                absent(out, "OPLUS_", "feature bits");
+                absentUcs2(out, "oplus_", "feature bits (UTF-16)");
+                T.eq("OnePlus", tr.str(tr.ifd0(), 0x010F), "make untouched (spec.make == null)");
+            }
+            List<Ent> kept = new ArrayList<Ent>();
+            kept.add(userComment("ASCII", "not oplus_123", le));      // does not START with oplus_
+            kept.add(ascii(0x010E, "oplusfan photo"));
+            for (Ent e : kept) {
+                Opt o = opt(le);
+                o.make = "OnePlus";
+                o.model = "CPH2581";
+                if (e.tag == 0x9286) o.extraExif.add(e);
+                else o.extraIfd0.add(e);
+                Fx fx = build(o);
+                EditReport rep = new EditReport();
+                byte[] out = edit(fx.tiff, nullSpecWithMakerNoteRemoval(), rep);
+                intact(out, e, "not an oplus prefix");
+                T.check(!hasChangeContaining(rep, "eski marka"), "not reported " + rep);
+            }
+        }
+    }
+
+    public static void testRealExiftoolBrandTracesLE() throws Exception {
+        realExiftoolTraces("II");
+    }
+
+    public static void testRealExiftoolBrandTracesBE() throws Exception {
+        realExiftoolTraces("MM");
+    }
+
+    private static void realExiftoolTraces(String order) throws Exception {
+        File src = T.file("traces-" + order + ".jpg");
+        T.write(src, baseJpeg());
+        File th = T.file("traces-thumb.jpg");
+        T.write(th, thumbJpeg());
+        // non-ASCII text goes through a UTF-8 argfile (process arguments may be ASCII-only here);
+        // the "Ç" makes exiftool store the UserComment as "UNICODE" UTF-16 in the EXIF byte order
+        File args = T.file("traces-" + order + ".args");
+        T.write(args, "-UserComment=Çekim: Xiaomi 13 Ultra\n".getBytes(StandardCharsets.UTF_8));
+        T.run("exiftool", "-q", "-overwrite_original", "-ExifByteOrder=" + order,
+                "-Make=Xiaomi", "-Model=2211133C", "-Software=V816.0.5.0.UMCMIXM",
+                "-XiaomiModel=Xiaomi 13", "-XiaomiSettings={\"AIEnable\":false,\"Sensor\":\"Rear\",\"Mirror\":false}",
+                "-@", args.getPath(), "-XPComment=2211133C gece", "-XPSubject=xiaomi",
+                "-XPKeywords=tatil;deniz", "-ImageDescription=oplus_8388608",
+                "-DateTimeOriginal=2025:06:01 12:00:00", "-ExifImageWidth=64", "-ExifImageHeight=48",
+                "-GPSLatitude=41.0", "-GPSLatitudeRef=N", "-GPSLongitude=29.0", "-GPSLongitudeRef=E",
+                "-ThumbnailImage<=" + th.getPath(), src.getPath());
+        Map<String, String> m0 = T.exif(src);
+        T.eq("Xiaomi 13", m0.get("ExifIFD:XiaomiModel"), "fixture XiaomiModel");
+        T.eq("Çekim: Xiaomi 13 Ultra", m0.get("ExifIFD:UserComment"), "fixture UserComment");
+        T.eq("Rear", m0.get("JSON:Sensor"), "fixture XiaomiSettings");
+        byte[] jpg = T.read(src);
+        byte[] tiff = extractTiff(jpg);
+        T.eq(order, new String(tiff, 0, 2, StandardCharsets.US_ASCII), "byte order");
+
+        EditReport rep = new EditReport();
+        byte[] out = edit(tiff, T.appleSpec(), rep);
+        File dst = T.file("traces-" + order + "-out.jpg");
+        T.write(dst, withExif(jpg, out));
+        Map<String, String> m = T.exif(dst);
+        for (String k : m.keySet()) T.check(!k.startsWith("JSON:") && !k.contains("Xiaomi"), "survived: " + k);
+        T.eq(null, m.get("ExifIFD:UserComment"), "UserComment");
+        T.eq(null, m.get("IFD0:XPComment"), "XPComment");
+        T.eq(null, m.get("IFD0:XPSubject"), "XPSubject");
+        T.eq(null, m.get("IFD0:ImageDescription"), "ImageDescription (oplus_)");
+        T.eq("tatil;deniz", m.get("IFD0:XPKeywords"), "unrelated XPKeywords kept");
+        T.eq("Apple", m.get("IFD0:Make"), "make");
+        T.eq("2025:06:01 12:00:00", m.get("ExifIFD:DateTimeOriginal"), "dto");
+        T.eq("41 deg 0' 0.00\"", m.get("GPS:GPSLatitude"), "gps");
+        T.check(Arrays.equals(thumbJpeg(), exiftoolThumbnail(dst)), "thumbnail preserved");
+        assertNoNewWarnings(src, dst);
+        T.eq("0", T.exec("compare", "-metric", "AE", src.getPath(), dst.getPath(), "null:").out.trim(), "pixels identical");
+        absent(out, "Xiaomi", "make / XiaomiModel");
+        absentUcs2(out, "Xiaomi", "UserComment (UNICODE)");
+        absentUcs2(out, "xiaomi", "XPSubject");
+        absent(out, "2211133C", "model");
+        absentUcs2(out, "2211133C", "XPComment");
+        absent(out, "AIEnable", "XiaomiSettings");
+        absent(out, "oplus_", "ImageDescription");
+
+        T.check(hasChange(rep, "EXIF XiaomiSettings kaldırıldı"), "rep " + rep);
+        T.check(hasChange(rep, "EXIF XiaomiModel kaldırıldı"), "rep " + rep);
+        T.check(hasChange(rep, "EXIF UserComment" + TRACE), "rep " + rep);
+        T.check(hasChange(rep, "EXIF XPComment" + TRACE), "rep " + rep);
+        T.check(hasChange(rep, "EXIF XPSubject" + TRACE), "rep " + rep);
+        T.check(hasChange(rep, "EXIF ImageDescription" + TRACE), "rep " + rep);
+        T.check(!hasChangeContaining(rep, "XPKeywords"), "rep " + rep);
+
+        EditReport rep2 = new EditReport();
+        T.check(edit(out, T.appleSpec(), rep2) == out, "idempotent " + rep2);
+        File again = T.file("traces-" + order + "-rewrite.jpg");
+        T.write(again, T.read(dst));
+        T.run("exiftool", "-q", "-overwrite_original", "-Artist=Test", again.getPath());
+        T.eq("Apple", T.exif(again).get("IFD0:Make"), "exiftool can still rewrite the output");
+    }
+
+    // =====================================================================================
     // Tests: real exiftool-written EXIF
     // =====================================================================================
 
@@ -1681,6 +2179,9 @@ public final class ExifTiffTest {
             seeds.add(build(o).tiff);
         }
         seeds.add(ExifTiff.createMinimal(T.appleSpec(), 100, 100));
+        // brand traces beyond the MakerNote (vendor tags + free-text tags)
+        seeds.add(build(xiaomiOpt(true, null)).tiff);
+        seeds.add(brandTextFixture(false).fx.tiff);
         Random rnd = new Random(20261101L);
         long[] interesting = {0, 1, 2, 4, 7, 8, 0xFFFF, 0x7FFFFFFFL, 0x80000000L, 0xFFFFFFFFL, 0xFFFFFFF0L};
         int n = 0;

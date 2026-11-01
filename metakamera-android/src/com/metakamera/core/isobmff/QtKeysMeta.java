@@ -106,7 +106,10 @@ final class QtKeysMeta {
         return m;
     }
 
-    /** Creates a QuickTime-style moov/meta (no version/flags) with hdlr 'mdta', keys and ilst. */
+    /**
+     * Creates a QuickTime-style meta (no version/flags) with hdlr 'mdta', keys and ilst, appended to
+     * {@code moov} (or to a 'trak' for track-level keys, as iPhones write them).
+     */
     static QtKeysMeta create(Mp4Box moov) {
         Mp4Box meta = Mp4Box.newContainer("meta", null);
         Mp4Writer h = new Mp4Writer();
@@ -147,6 +150,11 @@ final class QtKeysMeta {
     /** Key name at 1-based index. */
     String name(int index) {
         return names.get(index - 1);
+    }
+
+    /** No keys and no ilst items left. */
+    boolean isEmpty() {
+        return names.isEmpty() && (ilst == null || !ilst.isContainer() || ilst.children.isEmpty());
     }
 
     /** 1-based index of the first key with this exact name, or 0. */

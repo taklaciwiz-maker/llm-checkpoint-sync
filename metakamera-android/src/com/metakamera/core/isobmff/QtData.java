@@ -12,6 +12,8 @@ import java.util.List;
  *       [uint32 type indicator][uint32 locale][value]</li>
  *   <li>QuickTime user-data text atoms ('©mak', '©mod', '©swr' in moov/udta):
  *       one or more [uint16 length][uint16 language][text]</li>
+ *   <li>3GPP user-data string atoms ('auth' ...): [version/flags][uint16 language][text NUL]</li>
+ *   <li>raw string atoms (Samsung udta/smta/'mdln')</li>
  * </ul>
  */
 final class QtData {
@@ -21,6 +23,7 @@ final class QtData {
     static final int LANG_ENG = 0x15C7;
 
     private static final Charset UTF_16BE = Charset.forName("UTF-16BE");
+    private static final Charset UTF_16LE = Charset.forName("UTF-16LE");
 
     private QtData() {
     }
@@ -153,6 +156,81 @@ final class QtData {
         ByteUtils.put16be(p, 2, lang);
         System.arraycopy(v, 0, p, 4, v.length);
         return p;
+    }
+
+    // ------------------------------------------------------------------ 3GPP text atoms ('auth', 'cprt', ...)
+
+    /** Bytes before the text of a 3GPP user-data string: FullBox version/flags + packed language. */
+    static final int GPP_HEADER = 6;
+
+    /**
+     * Text of a 3GPP user-data string atom payload (3GPP TS 26.244: version/flags, 2-byte packed
+     * language, NUL-terminated UTF-8 or BOM-prefixed UTF-16), null if too short.
+     */
+    static String decode3gppText(byte[] p) {
+        if (p == null || p.length < GPP_HEADER) return null;
+        int n = p.length - GPP_HEADER;
+        String s;
+        if (n >= 2 && (p[GPP_HEADER] & 0xFF) == 0xFE && (p[GPP_HEADER + 1] & 0xFF) == 0xFF) {
+            s = new String(p, GPP_HEADER + 2, (n - 2) - ((n - 2) % 2), UTF_16BE);
+        } else if (n >= 2 && (p[GPP_HEADER] & 0xFF) == 0xFF && (p[GPP_HEADER + 1] & 0xFF) == 0xFE) {
+            s = new String(p, GPP_HEADER + 2, (n - 2) - ((n - 2) % 2), UTF_16LE);
+        } else {
+            s = new String(p, GPP_HEADER, n, ByteUtils.UTF_8);
+        }
+        return stripNul(cutAtNul(s));
+    }
+
+    /**
+     * New payload for a 3GPP user-data string atom: keeps version/flags and language of the old
+     * payload ("eng" when there is none), writes NUL-terminated UTF-8 (or UTF-16BE with BOM when the
+     * old text used UTF-16).
+     */
+    static byte[] encode3gppText(byte[] oldPayload, String value) {
+        Mp4Writer w = new Mp4Writer();
+        boolean utf16 = false;
+        if (oldPayload != null && oldPayload.length >= GPP_HEADER) {
+            w.write(oldPayload, 0, GPP_HEADER);
+            int n = oldPayload.length - GPP_HEADER;
+            int b0 = n >= 2 ? oldPayload[GPP_HEADER] & 0xFF : 0;
+            int b1 = n >= 2 ? oldPayload[GPP_HEADER + 1] & 0xFF : 0;
+            utf16 = (b0 == 0xFE && b1 == 0xFF) || (b0 == 0xFF && b1 == 0xFE);
+        } else {
+            w.u32(0);
+            w.u16(LANG_ENG);
+        }
+        if (utf16) {
+            w.u8(0xFE);
+            w.u8(0xFF);
+            w.write(value.getBytes(UTF_16BE));
+            w.u16(0);
+        } else {
+            w.write(value.getBytes(ByteUtils.UTF_8));
+            w.u8(0);
+        }
+        return w.toByteArray();
+    }
+
+    // ------------------------------------------------------------------ raw string atoms (Samsung 'mdln')
+
+    /** A raw (optionally NUL-terminated) UTF-8 string atom payload. */
+    static String decodeRawText(byte[] p) {
+        if (p == null) return null;
+        return stripNul(cutAtNul(new String(p, ByteUtils.UTF_8)));
+    }
+
+    /** New raw string payload; keeps a NUL terminator when the old payload had one. */
+    static byte[] encodeRawText(byte[] oldPayload, String value) {
+        byte[] v = value.getBytes(ByteUtils.UTF_8);
+        boolean nul = oldPayload != null && oldPayload.length > 0 && oldPayload[oldPayload.length - 1] == 0;
+        byte[] r = new byte[v.length + (nul ? 1 : 0)];
+        System.arraycopy(v, 0, r, 0, v.length);
+        return r;
+    }
+
+    private static String cutAtNul(String s) {
+        int z = s.indexOf('\0');
+        return z < 0 ? s : s.substring(0, z);
     }
 
     // ------------------------------------------------------------------ misc

@@ -26,6 +26,7 @@ final class TiffFile {
     static final int T_SLONG = 9;
     static final int T_IFD = 13;
 
+    static final int TAG_IMAGE_DESCRIPTION = 0x010E;
     static final int TAG_MAKE = 0x010F;
     static final int TAG_MODEL = 0x0110;
     static final int TAG_STRIP_OFFSETS = 0x0111;
@@ -45,6 +46,13 @@ final class TiffFile {
     static final int TAG_OFFSET_TIME_ORIGINAL = 0x9011;
     static final int TAG_COMPONENTS_CONFIGURATION = 0x9101;
     static final int TAG_MAKER_NOTE = 0x927C;
+    static final int TAG_USER_COMMENT = 0x9286;
+    static final int TAG_XIAOMI_SETTINGS = 0x9999;
+    static final int TAG_XIAOMI_MODEL = 0x9A00;
+    static final int TAG_XP_TITLE = 0x9C9B;
+    static final int TAG_XP_COMMENT = 0x9C9C;
+    static final int TAG_XP_KEYWORDS = 0x9C9E;
+    static final int TAG_XP_SUBJECT = 0x9C9F;
     static final int TAG_FLASHPIX_VERSION = 0xA000;
     static final int TAG_COLOR_SPACE = 0xA001;
     static final int TAG_PIXEL_X = 0xA002;

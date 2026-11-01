@@ -62,6 +62,14 @@ final class TiffEditor {
     private void applyEdits() {
         TiffIfd ifd0 = tf.ifd0;
         String oldMake = tf.string(ifd0.find(TAG_MAKE));
+        // the original identity, read before anything is edited (brand-trace detection)
+        List<String> oldIdentity = new ArrayList<String>(4);
+        BrandTraces.addNeedle(oldIdentity, oldMake, spec.make);
+        BrandTraces.addNeedle(oldIdentity, tf.string(ifd0.find(TAG_MODEL)), spec.model);
+        if (tf.ifd1 != null) {
+            BrandTraces.addNeedle(oldIdentity, tf.string(tf.ifd1.find(TAG_MAKE)), spec.make);
+            BrandTraces.addNeedle(oldIdentity, tf.string(tf.ifd1.find(TAG_MODEL)), spec.model);
+        }
 
         setString(ifd0, TAG_MAKE, "Make", spec.make, true, "EXIF ");
         setString(ifd0, TAG_MODEL, "Model", spec.model, true, "EXIF ");
@@ -102,6 +110,9 @@ final class TiffEditor {
                     r.change(vendor == null ? "MakerNote temizlendi" : "MakerNote temizlendi (" + vendor + ")");
                 }
             }
+            // "remove original-brand traces" also covers vendor tags and brand-bearing free text
+            removeVendorTags();
+            removeBrandTexts(oldIdentity);
         }
 
         if (spec.clearSerials) {
@@ -120,6 +131,70 @@ final class TiffEditor {
         }
 
         if (spec.editIcc && spec.icc != null) editEmbeddedIcc(ifd0);
+    }
+
+    /**
+     * Drops the vendor-only tags of {@link BrandTraces#VENDOR_TAGS} (Xiaomi) from the Exif IFD and
+     * IFD0; their out-of-line bytes are zero-filled on commit like any removed value.
+     */
+    private void removeVendorTags() {
+        TiffIfd[] where = {tf.exif, tf.ifd0};
+        List<String> unnamed = new ArrayList<String>();
+        for (int t = 0; t < BrandTraces.VENDOR_TAGS.length; t++) {
+            boolean found = false;
+            for (TiffIfd ifd : where) {
+                if (ifd == null) continue;
+                List<TiffEntry> es = ifd.findAll(BrandTraces.VENDOR_TAGS[t]);
+                for (int i = 0; i < es.size(); i++) {
+                    removeEntry(ifd, es.get(i));
+                    found = true;
+                }
+            }
+            if (!found) continue;
+            String name = BrandTraces.VENDOR_NAMES[t];
+            if (name != null) r.change("EXIF " + name + " kaldırıldı");
+            else unnamed.add(BrandTraces.hex(BrandTraces.VENDOR_TAGS[t]));
+        }
+        if (unnamed.isEmpty()) return;
+        StringBuilder sb = new StringBuilder(unnamed.size() == 1 ? "EXIF Xiaomi etiketi kaldırıldı: "
+                : "EXIF Xiaomi etiketleri kaldırıldı: ");
+        for (int i = 0; i < unnamed.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(unnamed.get(i));
+        }
+        r.change(sb.toString());
+    }
+
+    /**
+     * Drops ImageDescription / UserComment / XP* text tags (IFD0, Exif IFD, IFD1) whose text names
+     * the old make or model or carries OPPO/OnePlus "oplus_" feature bits; unrelated text is kept.
+     */
+    private void removeBrandTexts(List<String> oldIdentity) {
+        TiffIfd[] where = {tf.ifd0, tf.exif, tf.ifd1};
+        List<String> reported = new ArrayList<String>();
+        for (TiffIfd ifd : where) {
+            if (ifd == null) continue;
+            String prefix = ifd == tf.ifd1 ? "EXIF IFD1 " : "EXIF ";
+            for (int t = 0; t < BrandTraces.TEXT_TAGS.length; t++) {
+                int tag = BrandTraces.TEXT_TAGS[t];
+                List<TiffEntry> es = ifd.findAll(tag);
+                boolean removed = false;
+                for (int i = 0; i < es.size(); i++) {
+                    TiffEntry e = es.get(i);
+                    if (e.newValue != null) continue;
+                    byte[] v = tf.value(e);
+                    if (v == null || !BrandTraces.isBrandText(v, tag == TAG_USER_COMMENT, oldIdentity)) continue;
+                    removeEntry(ifd, e);
+                    removed = true;
+                }
+                if (!removed) continue;
+                String msg = prefix + BrandTraces.TEXT_NAMES[t] + " kaldırıldı (eski marka bilgisi)";
+                if (!reported.contains(msg)) {
+                    reported.add(msg);
+                    r.change(msg);
+                }
+            }
+        }
     }
 
     private static boolean nonEmpty(String s) {
