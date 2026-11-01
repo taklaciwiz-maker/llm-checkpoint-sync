@@ -1,0 +1,81 @@
+name: MetaKamera APK
+
+# Builds the MetaKamera Android app (metakamera-android/) without Gradle, runs the
+# metadata-engine tests and publishes the signed APK as a GitHub Release.
+# Independent of the B2 -> Google Drive sync workflow.
+
+on:
+  push:
+    paths:
+      - 'metakamera-android/**'
+      - '.github/workflows/metakamera-apk.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: metakamera-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      FORCE_SYSTEM_TOOLS: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Android build tools and media test tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            aapt zipalign apksigner dalvik-exchange android-sdk-platform-23 \
+            libimage-exiftool-perl ffmpeg imagemagick webp gpac \
+            libheif-examples libheif-plugin-x265 libheif-plugin-aomenc libheif-plugin-libde265
+
+      - name: Cache android-all (Robolectric API 36 framework jar)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/metakamera
+          key: android-all-16-robolectric-13921718
+
+      - name: Metadata engine tests
+        working-directory: metakamera-android
+        run: tools/test-core.sh
+
+      - name: Build signed APK
+        working-directory: metakamera-android
+        env:
+          VERSION_NAME: 1.0.${{ github.run_number }}
+          VERSION_CODE: ${{ github.run_number }}
+          # Optional repository secrets for a stable signing key (base64 of a PKCS12 keystore).
+          # Without them a throw-away key is generated and updates need an uninstall first.
+          KEYSTORE_BASE64: ${{ secrets.METAKAMERA_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.METAKAMERA_KEYSTORE_PASSWORD }}
+        run: ./build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MetaKamera-1.0.${{ github.run_number }}
+          path: metakamera-android/build/MetaKamera-*.apk
+
+      # Releases only for manual runs or commits whose message contains [release]
+      - name: Publish GitHub Release
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: metakamera-v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: MetaKamera 1.0.${{ github.run_number }}
+          files: metakamera-android/build/MetaKamera-*.apk
+          body: |
+            MetaKamera — fotoğraf/video metadata cihaz düzenleyici (Android 8.0+).
+            APK dosyasını telefona indirip yükleyin ("bilinmeyen kaynaklar" izni gerekir).
+            Kaynak: `metakamera-android/` (commit ${{ github.sha }}).
