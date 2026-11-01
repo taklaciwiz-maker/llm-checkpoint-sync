@@ -59,7 +59,7 @@ public final class MediaInfo {
         if (mk.length() == 0 && md.length() == 0) return null;
         if (mk.length() == 0) return md;
         if (md.length() == 0) return mk;
-        if (md.toLowerCase().startsWith(mk.toLowerCase())) return md;
+        if (md.toLowerCase(java.util.Locale.ROOT).startsWith(mk.toLowerCase(java.util.Locale.ROOT))) return md;
         return mk + " " + md;
     }
 }

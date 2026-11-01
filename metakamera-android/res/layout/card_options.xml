@@ -177,6 +177,16 @@
         android:layout_height="wrap_content"
         android:minHeight="48dp" />
 
+    <TextView
+        android:id="@+id/album_note"
+        style="@style/MK.Secondary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingLeft="4dp"
+        android:paddingStart="4dp"
+        android:text="@string/album_note_camera"
+        android:textSize="12sp" />
+
     <CheckBox
         android:id="@+id/opt_keep_name"
         style="@style/MK.Check"

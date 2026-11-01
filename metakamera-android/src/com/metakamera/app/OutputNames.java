@@ -13,8 +13,29 @@ import java.util.TimeZone;
 final class OutputNames {
 
     private static final int MAX_BASE_LENGTH = 120;
+    /**
+     * File names are limited to 255 UTF-8 bytes; keep room for the extension and the " (12)" suffix that
+     * MediaStore / our legacy saver add on name clashes. Turkish letters take 2 bytes, CJK 3, emoji 4.
+     */
+    private static final int MAX_BASE_UTF8_BYTES = 200;
 
     private OutputNames() {
+    }
+
+    /** MIME type for the extensions our formats use ("" or unknown -> null). Pure fallback table. */
+    static String mimeForExtension(String ext) {
+        String e = ext == null ? "" : ext.toLowerCase(Locale.ROOT);
+        if (e.equals("jpg") || e.equals("jpeg") || e.equals("jpe")) return "image/jpeg";
+        if (e.equals("heic")) return "image/heic";
+        if (e.equals("heif") || e.equals("hif")) return "image/heif";
+        if (e.equals("avif")) return "image/avif";
+        if (e.equals("png")) return "image/png";
+        if (e.equals("webp")) return "image/webp";
+        if (e.equals("mp4") || e.equals("m4v")) return "video/mp4";
+        if (e.equals("3gp") || e.equals("3gpp")) return "video/3gpp";
+        if (e.equals("3g2") || e.equals("3gpp2")) return "video/3gpp2";
+        if (e.equals("mov") || e.equals("qt")) return "video/quicktime";
+        return null;
     }
 
     /** Extension without the dot, original case; "" when there is none. */
@@ -90,8 +111,33 @@ final class OutputNames {
         }
         String r = sb.toString().trim();
         while (r.startsWith(".")) r = r.substring(1);
-        if (r.length() > MAX_BASE_LENGTH) r = r.substring(0, MAX_BASE_LENGTH).trim();
+        r = truncate(r, MAX_BASE_LENGTH, MAX_BASE_UTF8_BYTES).trim();
         return r;
+    }
+
+    /** At most {@code maxChars} chars and {@code maxUtf8Bytes} UTF-8 bytes, never splitting a surrogate pair. */
+    static String truncate(String s, int maxChars, int maxUtf8Bytes) {
+        int bytes = 0;
+        int i = 0;
+        while (i < s.length()) {
+            char c = s.charAt(i);
+            int len = 1;
+            int b;
+            if (Character.isHighSurrogate(c) && i + 1 < s.length() && Character.isLowSurrogate(s.charAt(i + 1))) {
+                len = 2;
+                b = 4;
+            } else if (c < 0x80) {
+                b = 1;
+            } else if (c < 0x800) {
+                b = 2;
+            } else {
+                b = 3;
+            }
+            if (i + len > maxChars || bytes + b > maxUtf8Bytes) break;
+            bytes += b;
+            i += len;
+        }
+        return i >= s.length() ? s : s.substring(0, i);
     }
 
     /** yyyyMMdd_HHmmss of the capture time (EXIF / video creation time), else of {@code nowMillis}. */

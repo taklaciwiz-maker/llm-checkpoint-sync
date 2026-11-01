@@ -8,14 +8,12 @@ import android.database.MatrixCursor;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
-import android.webkit.MimeTypeMap;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Minimal read-only provider for sharing edited files:
@@ -49,18 +47,37 @@ public final class EditedFileProvider extends ContentProvider {
 
     private File fileFor(Uri uri) {
         Context c = getContext();
-        if (c == null || uri == null) return null;
-        List<String> seg = uri.getPathSegments();
-        if (seg == null || seg.size() != 3 || !ROOT.equals(seg.get(0))) return null;
-        File base = editedDir(c);
-        File f = new File(new File(base, seg.get(1)), seg.get(2));
+        if (c == null || uri == null || !AUTHORITY.equals(uri.getAuthority())) return null;
+        List<String> seg;
         try {
-            String basePath = base.getCanonicalPath() + File.separator;
-            if (!f.getCanonicalPath().startsWith(basePath)) return null;
+            seg = uri.getPathSegments();
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (seg == null || seg.size() != 3 || !ROOT.equals(seg.get(0))) return null;
+        String dirName = seg.get(1);
+        String fileName = seg.get(2);
+        if (!isPlainName(dirName) || !isPlainName(fileName)) return null;
+        File base = editedDir(c);
+        File f = new File(new File(base, dirName), fileName);
+        try {
+            // must resolve to exactly cacheDir/edited/<dir>/<file> (no traversal, no symlink escape)
+            File canon = f.getCanonicalFile();
+            File parent = canon.getParentFile();
+            File grand = parent == null ? null : parent.getParentFile();
+            if (grand == null || !grand.getPath().equals(base.getCanonicalPath())) return null;
         } catch (IOException e) {
+            return null;
+        } catch (SecurityException e) {
             return null;
         }
         return f;
+    }
+
+    /** A single path segment: not empty, not "." / "..", no separators or NUL. */
+    private static boolean isPlainName(String s) {
+        if (s == null || s.length() == 0 || s.equals(".") || s.equals("..")) return false;
+        return s.indexOf('/') < 0 && s.indexOf('\\') < 0 && s.indexOf('\0') < 0;
     }
 
     @Override
@@ -91,20 +108,10 @@ public final class EditedFileProvider extends ContentProvider {
         return mimeOf(f.getName());
     }
 
+    /** Same mapping as the share intent's type (GallerySaver.mimeFor), so receivers see one MIME type. */
     static String mimeOf(String name) {
-        String ext = OutputNames.extensionOf(name).toLowerCase(Locale.ROOT);
-        String m = null;
-        try {
-            m = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
-        } catch (RuntimeException ignored) {
-            // unknown
-        }
-        if (m != null) return m;
-        if (ext.equals("heic") || ext.equals("heif")) return "image/heic";
-        if (ext.equals("avif")) return "image/avif";
-        if (ext.equals("webp")) return "image/webp";
-        if (ext.equals("mov")) return "video/quicktime";
-        return "application/octet-stream";
+        String m = GallerySaver.mimeForName(name);
+        return m != null ? m : "application/octet-stream";
     }
 
     @Override

@@ -54,8 +54,13 @@ final class ItemRow {
 
     ItemRow(LayoutInflater inflater, ViewGroup parent, final Callbacks cb) {
         view = inflater.inflate(R.layout.item_media, parent, false);
+        // Every row reuses the same view ids, so the activity's view-state save/restore would copy the
+        // last row's state (selectable details text, progress) into all rows after a rotation. Rows are
+        // rebuilt from AppState instead.
+        view.setSaveFromParentEnabled(false);
         divider = view.findViewById(R.id.item_divider);
         thumb = (ImageView) view.findViewById(R.id.item_thumb);
+        thumb.setClipToOutline(true); // round the preview like its bg_thumb background
         videoBadge = (ImageView) view.findViewById(R.id.item_video_badge);
         name = (TextView) view.findViewById(R.id.item_name);
         meta = (TextView) view.findViewById(R.id.item_meta);
@@ -124,7 +129,7 @@ final class ItemRow {
             UiUtil.setText(current, c.getString(R.string.item_read_error, it.inspectError));
             current.setTextColor(c.getColor(R.color.mk_error));
         } else {
-            String label = it.info == null ? null : it.info.deviceLabel();
+            String label = UiUtil.deviceLabel(it.info);
             UiUtil.setText(current, label == null ? c.getString(R.string.item_no_device)
                     : c.getString(R.string.item_current, label));
             current.setTextColor(c.getColor(R.color.mk_text));
@@ -178,9 +183,13 @@ final class ItemRow {
             } else if (it.saving) {
                 UiUtil.setText(save, c.getString(R.string.item_saving));
                 UiUtil.setEnabled(save, false);
+            } else if (it.savedPath != null) {
+                // saved, but the media scanner returned no uri to open (API 26-28)
+                UiUtil.setText(save, c.getString(R.string.item_saved_short));
+                UiUtil.setEnabled(save, false);
             } else {
                 UiUtil.setText(save, c.getString(R.string.item_save));
-                UiUtil.setEnabled(save, !busy && it.savedPath == null);
+                UiUtil.setEnabled(save, !busy);
             }
             UiUtil.setEnabled(share, true);
         }
@@ -200,7 +209,7 @@ final class ItemRow {
                 color = R.color.mk_accent;
                 break;
             case MediaItem.ST_DONE: {
-                String label = it.outputInfo == null ? null : it.outputInfo.deviceLabel();
+                String label = UiUtil.deviceLabel(it.outputInfo);
                 s = c.getString(R.string.item_new, label != null ? label : "—");
                 color = R.color.mk_success;
                 StringBuilder sb = new StringBuilder();

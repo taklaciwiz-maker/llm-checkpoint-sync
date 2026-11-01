@@ -145,6 +145,12 @@ final class AppState {
         }
     }
 
+    /** Unregisters {@code l} only if it is still the listener (an older activity instance stopping late
+     *  must not unregister the newer one). */
+    void removeListener(Listener l) {
+        if (listener == l) listener = null;
+    }
+
     boolean isBusy() {
         return jobRunning || savingCount > 0;
     }
@@ -574,6 +580,8 @@ final class AppState {
                 int fail = 0;
                 GallerySaver.Result last = null;
                 String firstError = null;
+                // photos and videos may land in different folders (Pictures/… vs Movies/…)
+                List<String> dirs = new ArrayList<String>();
                 for (final SaveEntry e : list) {
                     GallerySaver.Result r = null;
                     String err = null;
@@ -581,6 +589,7 @@ final class AppState {
                         r = GallerySaver.save(app, e.file, e.name, e.format, album, e.dateTaken);
                         ok++;
                         last = r;
+                        if (r.displayDir != null && !dirs.contains(r.displayDir)) dirs.add(r.displayDir);
                     } catch (Throwable t) {
                         Log.w(TAG, "gallery", t);
                         err = UiUtil.errorMessage(t);
@@ -608,7 +617,12 @@ final class AppState {
                 if (fail == 0 && ok == 1 && last != null) {
                     m = new Message(app.getString(R.string.msg_saved_one, last.displayPath), last.uri, last.mime);
                 } else if (fail == 0 && last != null) {
-                    m = new Message(app.getString(R.string.msg_saved_many, ok, GallerySaver.relativeDir(album)),
+                    StringBuilder where = new StringBuilder();
+                    for (int i = 0; i < dirs.size(); i++) {
+                        if (i > 0) where.append(i == dirs.size() - 1 ? " ve " : ", ");
+                        where.append(dirs.get(i));
+                    }
+                    m = new Message(app.getString(R.string.msg_saved_many, ok, where.toString()),
                             last.uri, last.mime);
                 } else if (ok > 0) {
                     m = new Message(app.getString(R.string.msg_saved_partial, ok, fail), null, null);

@@ -42,15 +42,17 @@
     <string name="adv_empty_hint">(boş)</string>
     <string name="adv_icc_hint">örn. APPL</string>
     <string name="adv_icc_keep_hint">(mevcut değer korunur)</string>
-    <string name="adv_edited_suffix"> · değiştirildi</string>
+    <string name="adv_edited_suffix">" · değiştirildi"</string>
     <string name="opt_desc_tags">ICC\'ye cihaz açıklama etiketleri ekle (dmnd/dmdd)</string>
     <string name="reset_advanced">Varsayılana dön</string>
     <string name="gallery_section">Galeriye kaydetme</string>
     <string name="album_label">Albüm</string>
-    <string name="album_camera">DCIM/Camera (Kamera)</string>
-    <string name="album_app">Pictures/MetaKamera</string>
+    <string name="album_camera">Kamera albümü (DCIM/Camera)</string>
+    <string name="album_app">MetaKamera albümü</string>
+    <string name="album_note_camera">Fotoğraflar ve videolar DCIM/Camera klasörüne kaydedilir.</string>
+    <string name="album_note_app">Fotoğraflar Pictures/MetaKamera, videolar Movies/MetaKamera klasörüne kaydedilir.</string>
     <string name="opt_keep_name">Orijinal dosya adını koru</string>
-    <string name="keep_name_note">Kapalıyken dosyalar IMG_20250101_123000_1.jpg biçiminde adlandırılır.</string>
+    <string name="keep_name_note">Kapalıyken dosyalar çekim tarihine göre adlandırılır: fotoğraflar IMG_20250101_123000_1.jpg, videolar VID_20250101_123000_1.mp4 gibi.</string>
 
     <!-- 4. Actions -->
     <string name="process">Metadata\'yı Düzenle</string>
@@ -81,6 +83,7 @@
     <string name="item_output">Çıktı: %1$s (%2$s)</string>
     <string name="item_save">Galeriye Kopyala</string>
     <string name="item_saving">Kopyalanıyor…</string>
+    <string name="item_saved_short">Kaydedildi</string>
     <string name="item_open">Aç</string>
     <string name="item_share">Paylaş</string>
     <string name="item_saved">Galeriye kaydedildi: %1$s</string>
@@ -127,7 +130,7 @@
     <!-- Help -->
     <string name="help_title">Nasıl çalışır?</string>
     <string name="help_ok">Tamam</string>
-    <string name="help_body">MetaKamera, fotoğraf ve videolarınızın yalnızca metadata (üst veri) kısmını değiştirir. Fotoğraf pikselleri ve video kareleri bayt bayt aynen korunur; yeniden sıkıştırma yapılmaz, kalite kaybı olmaz.\n\nDeğiştirilenler:\n• EXIF Make / Model (marka ve model)\n• İsteğe bağlı olarak Software, LensMake / LensModel ve HostComputer\n• Gömülü ICC renk profilindeki cihaz üreticisi ve modeli\n• XMP içindeki cihaz bilgileri ve videolardaki marka/model etiketleri\n• İsteğe bağlı: orijinal markayı ele veren MakerNote ve seri numaraları temizlenir\n\nKorunanlar: çekim tarihi ve saati, konum (GPS) bilgisi, çözünürlük, yön ve diğer tüm veriler.\n\nDesteklenen biçimler: JPEG, HEIC/HEIF, AVIF, PNG, WebP, MP4, MOV, 3GP.\n\nKullanım: 1) Fotoğraf veya videoları seçin, 2) hedef telefonu seçin, 3) «Metadata\'yı Düzenle» düğmesine dokunun, ardından sonucu galeriye kopyalayın ya da paylaşın. Orijinal dosyalarınız değiştirilmez; düzenlenen kopyalar ayrıca kaydedilir.\n\nİpucu: Galeriden seçilen bazı dosyalarda konum bilgisi sistem tarafından gizlenebilir. Konumun eksiksiz korunması için «Dosyalardan Seç» seçeneğini kullanın.</string>
+    <string name="help_body">MetaKamera, fotoğraf ve videolarınızın yalnızca metadata (üst veri) kısmını değiştirir. Fotoğraf pikselleri ve video kareleri bayt bayt aynen korunur; yeniden sıkıştırma yapılmaz, kalite kaybı olmaz.\n\nDeğiştirilenler:\n• EXIF Make / Model (marka ve model)\n• HostComputer ile isteğe bağlı olarak Software ve LensMake / LensModel\n• Gömülü ICC renk profilindeki cihaz üreticisi ve modeli\n• XMP içindeki cihaz bilgileri ve videolardaki marka/model etiketleri\n• İsteğe bağlı: orijinal markayı ele veren MakerNote ve seri numaraları temizlenir\n\nKorunanlar: çekim tarihi ve saati, konum (GPS) bilgisi, çözünürlük, yön ve diğer tüm veriler.\n\nDesteklenen biçimler: JPEG, HEIC/HEIF, AVIF, PNG, WebP, MP4, MOV, 3GP.\n\nKullanım: 1) Fotoğraf veya videoları seçin, 2) hedef telefonu seçin, 3) «Metadata\'yı Düzenle» düğmesine dokunun, ardından sonucu galeriye kopyalayın ya da paylaşın. Orijinal dosyalarınız değiştirilmez; düzenlenen kopyalar ayrıca kaydedilir.\n\nİpucu: Galeriden seçilen bazı dosyalarda konum bilgisi sistem tarafından gizlenebilir. Konumun eksiksiz korunması için «Dosyalardan Seç» seçeneğini kullanın.</string>
 
     <!-- Sharing -->
     <string name="share_title">Paylaş</string>

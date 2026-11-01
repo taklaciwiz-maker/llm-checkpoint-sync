@@ -24,7 +24,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Copies an edited file into the shared gallery (DCIM/Camera or Pictures/MetaKamera).
+ * Copies an edited file into the shared gallery (DCIM/Camera, or the app album: Pictures/MetaKamera for
+ * photos and Movies/MetaKamera for videos — MediaStore rejects videos under Pictures/).
  * API 29+: MediaStore insert with IS_PENDING; API 26-28: public directory + media scan
  * (needs WRITE_EXTERNAL_STORAGE, requested by the activity). Background thread only.
  */
@@ -38,37 +39,69 @@ final class GallerySaver {
         String mime;
         /** e.g. "DCIM/Camera/IMG_1234.jpg" */
         String displayPath;
+        /** Directory part of {@link #displayPath}, e.g. "DCIM/Camera". */
+        String displayDir;
     }
 
-    /** Relative directory shown to the user and used as MediaStore RELATIVE_PATH. */
-    static String relativeDir(int album) {
-        return album == Prefs.ALBUM_APP
-                ? Environment.DIRECTORY_PICTURES + "/MetaKamera"
-                : Environment.DIRECTORY_DCIM + "/Camera";
+    /**
+     * Relative directory shown to the user and used as MediaStore RELATIVE_PATH. The Video collection
+     * only accepts DCIM/ and Movies/, the Images collection only DCIM/ and Pictures/.
+     */
+    static String relativeDir(int album, boolean video) {
+        if (album != Prefs.ALBUM_APP) return Environment.DIRECTORY_DCIM + "/Camera";
+        return (video ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES) + "/MetaKamera";
+    }
+
+    /** MIME type registered for the extension (the table MediaStore checks names against), or null. */
+    static String systemMimeForExtension(String ext) {
+        if (ext == null || ext.length() == 0) return null;
+        try {
+            return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.toLowerCase(Locale.ROOT));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** MIME type for a file name: the system table, then our own table for formats older releases lack. */
+    static String mimeForName(String fileName) {
+        String ext = OutputNames.extensionOf(fileName);
+        String m = systemMimeForExtension(ext);
+        return m != null ? m : OutputNames.mimeForExtension(ext);
     }
 
     /** MIME type matching the file name extension (as MediaStore checks it), else the format's type. */
     static String mimeFor(String fileName, MediaFormat fmt) {
-        String ext = OutputNames.extensionOf(fileName).toLowerCase(Locale.ROOT);
-        String m = null;
-        try {
-            m = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
-        } catch (RuntimeException ignored) {
-            // fall back to the format
-        }
+        if (fmt == null) fmt = MediaFormat.UNKNOWN;
+        String m = mimeForName(fileName);
         String want = fmt.isVideo ? "video/" : "image/";
         if (m != null && m.startsWith(want)) return m;
         return fmt.mimeType;
     }
 
+    /**
+     * Display name for MediaStore: when the system does not know the extension (e.g. ".hif", or ".avif"
+     * before Android 12) MediaProvider would append another one ("x.hif.heic"), so such names get the
+     * format's standard extension instead.
+     */
+    static String galleryName(String name, MediaFormat fmt) {
+        String ext = OutputNames.extensionOf(name);
+        if (ext.length() == 0) return name + "." + fmt.extension;
+        if (systemMimeForExtension(ext) != null || ext.equalsIgnoreCase(fmt.extension)) return name;
+        return OutputNames.baseNameOf(name) + "." + fmt.extension;
+    }
+
     static Result save(Context c, File src, String name, MediaFormat fmt, int album, long dateTaken)
             throws IOException {
         if (src == null || !src.isFile()) throw new UserException("Düzenlenmiş dosya bulunamadı");
+        if (fmt == null || fmt == MediaFormat.UNKNOWN) throw new UserException("Bilinmeyen dosya biçimi");
+        if (Build.VERSION.SDK_INT >= 29) name = galleryName(name, fmt);
         String mime = mimeFor(name, fmt);
         Result r = Build.VERSION.SDK_INT >= 29
                 ? saveMediaStore(c, src, name, mime, fmt.isVideo, album, dateTaken)
-                : saveLegacy(c, src, name, mime, album, dateTaken);
+                : saveLegacy(c, src, name, mime, fmt.isVideo, album, dateTaken);
         r.mime = mime;
+        int slash = r.displayPath.lastIndexOf('/');
+        r.displayDir = slash > 0 ? r.displayPath.substring(0, slash) : relativeDir(album, fmt.isVideo);
         return r;
     }
 
@@ -78,7 +111,7 @@ final class GallerySaver {
         Uri collection = video
                 ? MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 : MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
-        String rel = relativeDir(album);
+        String rel = relativeDir(album, video);
         ContentValues v = new ContentValues();
         v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
         v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
@@ -143,15 +176,14 @@ final class GallerySaver {
     }
 
     @SuppressWarnings("deprecation")
-    private static Result saveLegacy(Context c, File src, String name, String mime, int album, long dateTaken)
-            throws IOException {
+    private static Result saveLegacy(Context c, File src, String name, String mime, boolean video, int album,
+                                     long dateTaken) throws IOException {
         if (!Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
             throw new UserException("Paylaşılan depolama alanı kullanılamıyor");
         }
-        File base = Environment.getExternalStoragePublicDirectory(
-                album == Prefs.ALBUM_APP ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DCIM);
-        File dir = new File(base, album == Prefs.ALBUM_APP ? "MetaKamera" : "Camera");
-        if (!dir.isDirectory() && !dir.mkdirs()) throw new UserException("Klasör oluşturulamadı: " + relativeDir(album));
+        String rel = relativeDir(album, video);
+        File dir = new File(Environment.getExternalStorageDirectory(), rel);
+        if (!dir.isDirectory() && !dir.mkdirs()) throw new UserException("Klasör oluşturulamadı: " + rel);
         File dest = uniqueFile(dir, name);
         boolean ok = false;
         try {
@@ -192,7 +224,7 @@ final class GallerySaver {
         }
         Result r = new Result();
         r.uri = scanned[0];
-        r.displayPath = relativeDir(album) + "/" + dest.getName();
+        r.displayPath = rel + "/" + dest.getName();
         return r;
     }
 

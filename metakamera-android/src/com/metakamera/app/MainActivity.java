@@ -9,6 +9,7 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.os.ext.SdkExtensions;
 import android.provider.MediaStore;
 import android.text.Editable;
@@ -44,6 +45,8 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
     private static final int REQ_PERM_STORAGE = 11;
     private static final int PICK_GALLERY = 1;
     private static final int PICK_FILES = 2;
+    /** Ignore a second tap that would start the same external screen twice (picker, share sheet, viewer). */
+    private static final long LAUNCH_DEBOUNCE_MS = 800;
 
     private static final String S_PENDING_PICK = "pending_pick";
     private static final String S_PENDING_SAVE = "pending_save";
@@ -84,6 +87,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
     private final EditText[] advFields = new EditText[EditOptions.FIELD_COUNT];
     private final TextView[] advLabels = new TextView[EditOptions.FIELD_COUNT];
     private Spinner albumSpinner;
+    private TextView albumNote;
     private Button btnProcess;
     private ProgressBar overallProgress;
     private TextView jobStatus;
@@ -104,6 +108,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
     private Uri messageUri;
     private String messageMime;
     private boolean keepScreenOn;
+    private long lastLaunchAt;
 
     private final Runnable hideMessage = new Runnable() {
         @Override
@@ -152,7 +157,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
 
     @Override
     protected void onStop() {
-        state.setListener(null);
+        state.removeListener(this);
         super.onStop();
     }
 
@@ -163,6 +168,25 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
         if (pendingSaveIds != null) out.putLongArray(S_PENDING_SAVE, pendingSaveIds);
         if (picker != null && picker.isShowing()) out.putBundle(S_PICKER, picker.saveState());
         else if (pendingPickerState != null) out.putBundle(S_PICKER, pendingPickerState);
+    }
+
+    /**
+     * Android 8-11 finish the root activity on Back, which also revokes the read grants of every picked
+     * uri (they belong to this activity record): the selection would survive in AppState but could no
+     * longer be read. Behave like Android 12+ instead and only move the task to the background. On 12+
+     * the system already does this (and with predictive back on 16+ this method is not called at all).
+     */
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        if (Build.VERSION.SDK_INT < 31 && isTaskRoot() && (state.isBusy() || !state.items.isEmpty())) {
+            try {
+                if (moveTaskToBack(true)) return;
+            } catch (RuntimeException ignored) {
+                // fall back to the default behaviour
+            }
+        }
+        super.onBackPressed();
     }
 
     @Override
@@ -202,6 +226,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
         advancedToggle = (Button) findViewById(R.id.advanced_toggle);
         advancedContainer = findViewById(R.id.advanced_container);
         albumSpinner = (Spinner) findViewById(R.id.album_spinner);
+        albumNote = (TextView) findViewById(R.id.album_note);
         btnProcess = (Button) findViewById(R.id.btn_process);
         overallProgress = (ProgressBar) findViewById(R.id.overall_progress);
         jobStatus = (TextView) findViewById(R.id.job_status);
@@ -353,7 +378,9 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
         albumSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                if (!bindingOptions) state.prefs.setAlbum(position == 1 ? Prefs.ALBUM_APP : Prefs.ALBUM_CAMERA);
+                int album = position == 1 ? Prefs.ALBUM_APP : Prefs.ALBUM_CAMERA;
+                if (!bindingOptions) state.prefs.setAlbum(album);
+                bindAlbumNote(album);
             }
 
             @Override
@@ -385,6 +412,12 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
         bindDevice();
         fillAdvanced();
         bindActions();
+        // picker open before the process was killed: reopen once the database has loaded again
+        if (pendingPickerState != null && state.db != null) {
+            Bundle b = pendingPickerState;
+            pendingPickerState = null;
+            showPicker(b);
+        }
     }
 
     @Override
@@ -484,11 +517,18 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
             optKeepName.setChecked(state.prefs.keepName());
             int album = state.prefs.album();
             if (albumSpinner.getSelectedItemPosition() != album) albumSpinner.setSelection(album, false);
+            bindAlbumNote(album);
         } finally {
             bindingOptions = false;
         }
         bindAdvancedVisibility();
         bindIccDependents();
+    }
+
+    /** Where photos and videos end up (videos cannot go under Pictures/, see GallerySaver). */
+    private void bindAlbumNote(int album) {
+        if (albumNote == null) return;
+        UiUtil.setText(albumNote, getString(album == Prefs.ALBUM_APP ? R.string.album_note_app : R.string.album_note_camera));
     }
 
     private void bindAdvancedVisibility() {
@@ -618,6 +658,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
             showMessage(getString(R.string.msg_file_missing), null, null);
             return;
         }
+        if (!launchAllowed()) return;
         String mime = GallerySaver.mimeFor(item.outputName, item.outputFormat);
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType(mime);
@@ -631,10 +672,20 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
         }
     }
 
+    /** False when another external screen was started a moment ago (double tap); otherwise records now. */
+    private boolean launchAllowed() {
+        long now = SystemClock.elapsedRealtime();
+        if (lastLaunchAt != 0 && now - lastLaunchAt >= 0 && now - lastLaunchAt < LAUNCH_DEBOUNCE_MS) return false;
+        lastLaunchAt = now;
+        return true;
+    }
+
     // ------------------------------------------------------------------ picking media
 
     private void requestPick(int which) {
-        if (state.isBusy()) return;
+        // pendingPick != 0: the media-location request is still on screen (a second tap would open the
+        // picker now and once more when the permission answer arrives)
+        if (state.isBusy() || pendingPick != 0) return;
         if (Build.VERSION.SDK_INT >= 29 && !state.prefs.mediaLocationAsked()
                 && checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             state.prefs.setMediaLocationAsked();
@@ -650,23 +701,28 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
     }
 
     private void launchPick(int which) {
+        if (isFinishing()) return;
         int remaining = AppState.MAX_ITEMS - state.items.size();
         if (remaining <= 0) {
             showMessage(getString(R.string.msg_max_items, AppState.MAX_ITEMS), null, null);
             return;
         }
+        if (!launchAllowed()) return;
         if (which == PICK_GALLERY) {
-            try {
-                startActivityForResult(galleryIntent(remaining), REQ_PICK_GALLERY);
-                return;
-            } catch (RuntimeException e) {
-                // no photo picker / gallery: fall through to the document picker
-            }
+            // photo picker -> any gallery app (GET_CONTENT) -> document picker
+            if (isPhotoPickerAvailable() && tryStart(photoPickerIntent(remaining), REQ_PICK_GALLERY)) return;
+            if (tryStart(getContentIntent(), REQ_PICK_GALLERY)) return;
         }
+        if (!tryStart(filesIntent(), REQ_PICK_FILES)) showMessage(getString(R.string.msg_no_picker), null, null);
+    }
+
+    private boolean tryStart(Intent intent, int requestCode) {
         try {
-            startActivityForResult(filesIntent(), REQ_PICK_FILES);
+            startActivityForResult(intent, requestCode);
+            return true;
         } catch (RuntimeException e) {
-            showMessage(getString(R.string.msg_no_picker), null, null);
+            // ActivityNotFoundException, or a SecurityException from a broken handler
+            return false;
         }
     }
 
@@ -683,20 +739,22 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
         return false;
     }
 
-    private static Intent galleryIntent(int remaining) {
-        if (isPhotoPickerAvailable()) {
-            // images and videos (no type filter)
-            Intent i = new Intent(MediaStore.ACTION_PICK_IMAGES);
-            int limit = AppState.MAX_ITEMS;
-            try {
-                limit = PhotoPicker.maxLimit();
-            } catch (Throwable ignored) {
-                // keep our own limit
-            }
-            int max = Math.min(remaining, limit);
-            if (max > 1) i.putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, max);
-            return i;
+    private static Intent photoPickerIntent(int remaining) {
+        // images and videos (no type filter)
+        Intent i = new Intent(MediaStore.ACTION_PICK_IMAGES);
+        int limit = AppState.MAX_ITEMS;
+        try {
+            limit = PhotoPicker.maxLimit();
+        } catch (Throwable ignored) {
+            // keep our own limit
         }
+        // EXTRA_PICK_IMAGES_MAX must be > 1 and <= getPickImagesMaxLimit(), otherwise the picker fails
+        int max = Math.min(remaining, limit);
+        if (max > 1) i.putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, max);
+        return i;
+    }
+
+    private static Intent getContentIntent() {
         Intent i = new Intent(Intent.ACTION_GET_CONTENT);
         i.setType("*/*");
         i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
@@ -769,7 +827,9 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
 
     @SuppressWarnings("deprecation")
     private void requestSave(List<MediaItem> list) {
-        if (list == null || list.isEmpty() || state.isBusy()) return;
+        // pendingSaveIds != null: the storage request is still on screen; a second request would be
+        // answered "denied" at once by Activity.requestPermissions and drop the first one's items
+        if (list == null || list.isEmpty() || state.isBusy() || pendingSaveIds != null) return;
         if (Build.VERSION.SDK_INT < 29
                 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             long[] ids = new long[list.size()];
@@ -787,7 +847,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
     }
 
     private void openUri(Uri uri, String mime) {
-        if (uri == null) return;
+        if (uri == null || !launchAllowed()) return;
         Intent v = new Intent(Intent.ACTION_VIEW);
         if (mime != null) v.setDataAndType(uri, mime);
         else v.setData(uri);
@@ -802,7 +862,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
     // ------------------------------------------------------------------ dialogs & messages
 
     private void showPicker(Bundle restore) {
-        if (state.db == null || isFinishing()) return;
+        if (state.db == null || isFinishing() || isDestroyed()) return;
         if (picker != null && picker.isShowing()) return;
         picker = new DevicePickerDialog(this, state.db, state.device, state.variant, new DevicePickerDialog.Callback() {
             @Override
@@ -815,6 +875,7 @@ public class MainActivity extends Activity implements AppState.Listener, ItemRow
     }
 
     private void showHelp() {
+        if (isFinishing() || isDestroyed()) return;
         if (helpDialog != null && helpDialog.isShowing()) return;
         helpDialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.help_title)

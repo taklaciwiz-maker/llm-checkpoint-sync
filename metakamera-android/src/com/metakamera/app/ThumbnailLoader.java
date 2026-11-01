@@ -116,7 +116,33 @@ final class ThumbnailLoader {
 
     // ------------------------------------------------------------------ background decoding
 
+    /**
+     * Decodes and shrinks the preview to what the px×px centre-crop view needs (shorter side = px, longer
+     * side at most 4·px), so up to 100 rows hold ~100 small bitmaps instead of up-to-2x decodes.
+     */
     private Bitmap decode(Uri uri, int px) {
+        Bitmap b = decodeRaw(uri, px);
+        return b == null ? null : fit(b, px);
+    }
+
+    private static Bitmap fit(Bitmap src, int px) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        if (w <= 0 || h <= 0) return null;
+        float s = Math.min((float) px / Math.min(w, h), (float) (4 * px) / Math.max(w, h));
+        if (s >= 0.95f) return src;
+        try {
+            Bitmap r = Bitmap.createScaledBitmap(src, Math.max(1, Math.round(w * s)), Math.max(1, Math.round(h * s)), true);
+            if (r != src) src.recycle();
+            return r;
+        } catch (RuntimeException e) {
+            return src;
+        } catch (OutOfMemoryError e) {
+            return src;
+        }
+    }
+
+    private Bitmap decodeRaw(Uri uri, int px) {
         ContentResolver cr = app.getContentResolver();
         if (Build.VERSION.SDK_INT >= 29) {
             try {
@@ -154,6 +180,8 @@ final class ThumbnailLoader {
         if (o.outWidth <= 0 || o.outHeight <= 0) return null;
         int sample = 1;
         while (Math.min(o.outWidth, o.outHeight) / (sample * 2) >= px) sample *= 2;
+        // extreme panoramas: also bound the longer side
+        while (Math.max(o.outWidth, o.outHeight) / sample > 16 * px) sample *= 2;
         BitmapFactory.Options d = new BitmapFactory.Options();
         d.inSampleSize = sample;
         Bitmap bm;

@@ -16,6 +16,7 @@ import android.view.WindowManager;
 import android.widget.TextView;
 
 import com.metakamera.core.MediaFormat;
+import com.metakamera.core.MediaInfo;
 import com.metakamera.core.UnsupportedFormatException;
 
 import java.io.EOFException;
@@ -76,6 +77,22 @@ final class UiUtil {
         }
     }
 
+    /**
+     * "Apple iPhone 15 Pro" style label of a file's make/model, or null when it has none. Same rule as
+     * MediaInfo.deviceLabel() but with Locale.ROOT casing, so "XIAOMI" / "Xiaomi 14" also match on a
+     * Turkish-locale phone (where "I".toLowerCase() is the dotless "ı").
+     */
+    static String deviceLabel(MediaInfo info) {
+        if (info == null) return null;
+        String mk = info.make == null ? "" : info.make.trim();
+        String md = info.model == null ? "" : info.model.trim();
+        if (mk.length() == 0 && md.length() == 0) return null;
+        if (mk.length() == 0) return md;
+        if (md.length() == 0) return mk;
+        if (md.toLowerCase(Locale.ROOT).startsWith(mk.toLowerCase(Locale.ROOT))) return md;
+        return mk + " " + md;
+    }
+
     /** Sets text only when it changed (avoids needless relayouts during progress updates). */
     static void setText(TextView v, CharSequence text) {
         CharSequence cur = v.getText();
@@ -124,6 +141,10 @@ final class UiUtil {
         if (w == null) return;
         boolean light = !isNight(a);
         try {
+            // Install the decor first: on API 30 PhoneWindow.getInsetsController() dereferences mDecor
+            // directly and throws an NPE before setContentView(), which would silently skip the light
+            // bar appearance below (dark-on-light navigation icons).
+            w.getDecorView();
             w.setStatusBarColor(Color.TRANSPARENT);
             w.setNavigationBarColor(Color.TRANSPARENT);
             if (Build.VERSION.SDK_INT >= 28) {

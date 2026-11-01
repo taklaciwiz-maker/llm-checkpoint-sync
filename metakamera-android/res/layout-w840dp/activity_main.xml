@@ -15,6 +15,7 @@
         android:paddingRight="8dp">
 
         <ScrollView
+            android:id="@+id/scroll_media"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
@@ -36,6 +37,7 @@
         </ScrollView>
 
         <ScrollView
+            android:id="@+id/scroll_settings"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
