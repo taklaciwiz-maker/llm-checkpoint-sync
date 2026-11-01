@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "note": "Development placeholder. The real database is generated later with the same schema.",
+  "brands": [
+    {"name": "Apple", "icc": {"manufacturer": "APPL", "model": "", "cmm": "appl", "platform": "APPL", "creator": "appl"}},
+    {"name": "Samsung", "icc": {"manufacturer": "SAMS", "model": "", "cmm": "", "platform": "", "creator": ""}},
+    {"name": "Google", "icc": {"manufacturer": "GOOG", "model": "", "cmm": "", "platform": "", "creator": "GOOG"}},
+    {"name": "Huawei", "icc": {"manufacturer": "HUAW", "model": "", "cmm": "", "platform": "", "creator": ""}},
+    {"name": "Xiaomi", "icc": {"manufacturer": "XIAO", "model": "", "cmm": "", "platform": ""}}
+  ],
+  "devices": [
+    {"brand": "Apple", "name": "iPhone 18 Pro Max", "year": 2026, "make": "Apple", "model": "iPhone 18 Pro Max", "variants": [], "software": "27.0", "lensMake": "Apple", "lensModel": "iPhone 18 Pro Max back triple camera 6.765mm f/1.78", "hostComputer": "iPhone 18 Pro Max"},
+    {"brand": "Apple", "name": "iPhone 17 Pro Max", "year": 2025, "make": "Apple", "model": "iPhone 17 Pro Max", "variants": [], "software": "26.0", "lensMake": "Apple", "lensModel": "iPhone 17 Pro Max back triple camera 6.765mm f/1.78", "hostComputer": "iPhone 17 Pro Max"},
+    {"brand": "Apple", "name": "iPhone 16 Pro Max", "year": 2024, "make": "Apple", "model": "iPhone 16 Pro Max", "variants": [], "software": "18.0", "lensMake": "Apple", "lensModel": "iPhone 16 Pro Max back triple camera 6.765mm f/1.78", "hostComputer": "iPhone 16 Pro Max"},
+    {"brand": "Samsung", "name": "Galaxy S25 Ultra", "year": 2025, "make": "samsung", "model": "SM-S938B", "variants": ["SM-S938U", "SM-S938U1", "SM-S938W", "SM-S938N", "SM-S9380"], "software": "S938BXXU1AYA1", "lensMake": "", "lensModel": "", "hostComputer": ""},
+    {"brand": "Samsung", "name": "Galaxy S24 Ultra", "year": 2024, "make": "samsung", "model": "SM-S928B", "variants": ["SM-S928U", "SM-S928U1", "SM-S928W", "SM-S928N", "SM-S9280"], "software": "S928BXXU1AXB5", "lensMake": "", "lensModel": "", "hostComputer": ""},
+    {"brand": "Google", "name": "Pixel 10 Pro XL", "year": 2025, "make": "Google", "model": "Pixel 10 Pro XL", "variants": [], "software": "HDR+ 1.0.758341937zd", "lensMake": "Google", "lensModel": "Pixel 10 Pro XL back camera 6.9mm f/1.68", "hostComputer": ""},
+    {"brand": "Google", "name": "Pixel 9 Pro XL", "year": 2024, "make": "Google", "model": "Pixel 9 Pro XL", "variants": [], "software": "HDR+ 1.0.641377693zd", "lensMake": "Google", "lensModel": "Pixel 9 Pro XL back camera 6.9mm f/1.68", "hostComputer": ""},
+    {"brand": "Huawei", "name": "Pura 70 Ultra", "year": 2024, "make": "HUAWEI", "model": "HBP-AL00", "variants": ["HBP-LX9"], "software": "", "lensMake": "", "lensModel": "", "hostComputer": ""},
+    {"brand": "Huawei", "name": "Mate 60 Pro", "year": 2023, "make": "HUAWEI", "model": "ALN-AL00", "variants": ["ALN-AL80"], "software": "", "lensMake": "", "lensModel": "", "hostComputer": ""},
+    {"brand": "Xiaomi", "name": "Xiaomi 15 Ultra", "year": 2025, "make": "Xiaomi", "model": "25010PN30G", "variants": ["25019PNF3C"], "software": "", "lensMake": "", "lensModel": "", "hostComputer": ""},
+    {"brand": "Xiaomi", "name": "Xiaomi 14 Ultra", "year": 2024, "make": "Xiaomi", "model": "24030PN60G", "variants": ["24031PN0DC"], "software": "", "lensMake": "", "lensModel": "", "hostComputer": ""}
+  ]
+}

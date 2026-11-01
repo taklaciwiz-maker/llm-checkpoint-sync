@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingBottom="12dp"
+    android:paddingLeft="20dp"
+    android:paddingRight="20dp"
+    android:paddingTop="20dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFamily="sans-serif-medium"
+        android:text="@string/picker_title"
+        android:textColor="@color/mk_text"
+        android:textSize="20sp" />
+
+    <EditText
+        android:id="@+id/picker_search"
+        style="@style/MK.Field"
+        android:layout_marginTop="14dp"
+        android:drawableLeft="@drawable/ic_search"
+        android:drawablePadding="8dp"
+        android:drawableStart="@drawable/ic_search"
+        android:hint="@string/picker_search_hint"
+        android:imeOptions="actionSearch"
+        android:inputType="text|textNoSuggestions" />
+
+    <Spinner
+        android:id="@+id/picker_brand"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:minHeight="48dp" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="4dp"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/picker_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:choiceMode="none"
+            android:divider="@null"
+            android:dividerHeight="0dp"
+            android:fastScrollEnabled="true"
+            android:scrollbarStyle="outsideOverlay" />
+
+        <TextView
+            android:id="@+id/picker_empty"
+            style="@style/MK.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="@string/picker_empty"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/picker_variant_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            style="@style/MK.Label"
+            android:layout_marginTop="8dp"
+            android:text="@string/picker_variant" />
+
+        <Spinner
+            android:id="@+id/picker_variant"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="end|center_vertical"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/picker_cancel"
+            style="@style/MK.Button.Text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/picker_cancel" />
+
+        <Button
+            android:id="@+id/picker_ok"
+            style="@style/MK.Button.Primary"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="8dp"
+            android:layout_marginStart="8dp"
+            android:minHeight="44dp"
+            android:minWidth="96dp"
+            android:text="@string/picker_ok"
+            android:textSize="15sp" />
+    </LinearLayout>
+</LinearLayout>

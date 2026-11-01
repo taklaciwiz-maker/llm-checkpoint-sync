@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.MetaKamera" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/mk_accent</item>
+        <item name="android:colorPrimaryDark">@color/mk_bg</item>
+        <item name="android:colorAccent">@color/mk_accent</item>
+        <item name="android:colorControlActivated">@color/mk_accent</item>
+        <item name="android:colorControlNormal">@color/mk_text2</item>
+        <item name="android:colorBackground">@color/mk_bg</item>
+        <item name="android:windowBackground">@color/mk_bg</item>
+        <item name="android:statusBarColor">@color/mk_bg</item>
+        <item name="android:navigationBarColor">@color/mk_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.MetaKamera.Alert</item>
+    </style>
+
+    <style name="Theme.MetaKamera.Dialog" parent="android:Theme.Material.Dialog.NoActionBar">
+        <item name="android:colorPrimary">@color/mk_accent</item>
+        <item name="android:colorAccent">@color/mk_accent</item>
+        <item name="android:colorControlActivated">@color/mk_accent</item>
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
+        <item name="android:windowMinWidthMajor">80%</item>
+        <item name="android:windowMinWidthMinor">90%</item>
+    </style>
+
+    <style name="Theme.MetaKamera.Alert" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorPrimary">@color/mk_accent</item>
+        <item name="android:colorAccent">@color/mk_accent</item>
+    </style>
+</resources>

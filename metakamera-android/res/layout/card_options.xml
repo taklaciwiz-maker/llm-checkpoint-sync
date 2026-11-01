@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/card_options"
+    style="@style/MK.Card">
+
+    <TextView
+        style="@style/MK.CardTitle"
+        android:layout_marginBottom="4dp"
+        android:text="@string/card_options_title" />
+
+    <CheckBox
+        android:id="@+id/opt_icc"
+        style="@style/MK.Check"
+        android:text="@string/opt_icc" />
+
+    <CheckBox
+        android:id="@+id/opt_lens"
+        style="@style/MK.Check"
+        android:text="@string/opt_lens" />
+
+    <CheckBox
+        android:id="@+id/opt_software"
+        style="@style/MK.Check"
+        android:text="@string/opt_software" />
+
+    <CheckBox
+        android:id="@+id/opt_traces"
+        style="@style/MK.Check"
+        android:text="@string/opt_traces" />
+
+    <CheckBox
+        android:id="@+id/opt_xmp"
+        style="@style/MK.Check"
+        android:text="@string/opt_xmp" />
+
+    <Button
+        android:id="@+id/advanced_toggle"
+        style="@style/MK.Button.Text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="-8dp"
+        android:layout_marginStart="-8dp"
+        android:layout_marginTop="4dp"
+        android:text="@string/advanced_show" />
+
+    <LinearLayout
+        android:id="@+id/advanced_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            style="@style/MK.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/advanced_note"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/adv_make_label"
+            style="@style/MK.Label"
+            android:text="@string/adv_make" />
+
+        <EditText
+            android:id="@+id/adv_make"
+            style="@style/MK.Field"
+            android:hint="@string/adv_empty_hint" />
+
+        <TextView
+            android:id="@+id/adv_model_label"
+            style="@style/MK.Label"
+            android:text="@string/adv_model" />
+
+        <EditText
+            android:id="@+id/adv_model"
+            style="@style/MK.Field"
+            android:hint="@string/adv_empty_hint" />
+
+        <TextView
+            android:id="@+id/adv_software_label"
+            style="@style/MK.Label"
+            android:text="@string/adv_software" />
+
+        <EditText
+            android:id="@+id/adv_software"
+            style="@style/MK.Field"
+            android:hint="@string/adv_empty_hint" />
+
+        <TextView
+            android:id="@+id/adv_lens_make_label"
+            style="@style/MK.Label"
+            android:text="@string/adv_lens_make" />
+
+        <EditText
+            android:id="@+id/adv_lens_make"
+            style="@style/MK.Field"
+            android:hint="@string/adv_empty_hint" />
+
+        <TextView
+            android:id="@+id/adv_lens_model_label"
+            style="@style/MK.Label"
+            android:text="@string/adv_lens_model" />
+
+        <EditText
+            android:id="@+id/adv_lens_model"
+            style="@style/MK.Field"
+            android:hint="@string/adv_empty_hint" />
+
+        <TextView
+            android:id="@+id/adv_host_label"
+            style="@style/MK.Label"
+            android:text="@string/adv_host" />
+
+        <EditText
+            android:id="@+id/adv_host"
+            style="@style/MK.Field"
+            android:hint="@string/adv_empty_hint" />
+
+        <TextView
+            android:id="@+id/adv_icc_mfr_label"
+            style="@style/MK.Label"
+            android:text="@string/adv_icc_mfr" />
+
+        <EditText
+            android:id="@+id/adv_icc_mfr"
+            style="@style/MK.Field"
+            android:hint="@string/adv_icc_hint"
+            android:inputType="textCapCharacters|textNoSuggestions" />
+
+        <TextView
+            android:id="@+id/adv_icc_model_label"
+            style="@style/MK.Label"
+            android:text="@string/adv_icc_model" />
+
+        <EditText
+            android:id="@+id/adv_icc_model"
+            style="@style/MK.Field"
+            android:hint="@string/adv_icc_hint"
+            android:imeOptions="actionDone"
+            android:inputType="textCapCharacters|textNoSuggestions" />
+
+        <CheckBox
+            android:id="@+id/opt_desc_tags"
+            style="@style/MK.Check"
+            android:layout_marginTop="8dp"
+            android:text="@string/opt_desc_tags" />
+
+        <Button
+            android:id="@+id/btn_reset_advanced"
+            style="@style/MK.Button.Text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="-8dp"
+            android:layout_marginStart="-8dp"
+            android:text="@string/reset_advanced" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginBottom="12dp"
+        android:layout_marginTop="8dp"
+        android:background="@color/mk_divider" />
+
+    <TextView
+        style="@style/MK.CardTitle"
+        android:text="@string/gallery_section" />
+
+    <TextView
+        style="@style/MK.Label"
+        android:text="@string/album_label" />
+
+    <Spinner
+        android:id="@+id/album_spinner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp" />
+
+    <CheckBox
+        android:id="@+id/opt_keep_name"
+        style="@style/MK.Check"
+        android:layout_marginTop="4dp"
+        android:text="@string/opt_keep_name" />
+
+    <TextView
+        style="@style/MK.Secondary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingLeft="4dp"
+        android:paddingStart="4dp"
+        android:text="@string/keep_name_note"
+        android:textSize="12sp" />
+</LinearLayout>

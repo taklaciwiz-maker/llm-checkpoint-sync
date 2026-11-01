@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Single column (phones, portrait tablets). layout-w840dp has a two-pane variant with the same ids. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/mk_bg">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        android:fillViewport="true">
+
+        <!-- Side padding grows on wide screens so the column stays at most mk_content_max_width
+             (set in MainActivity; a custom View subclass is avoided because of the build toolchain). -->
+        <LinearLayout
+            android:id="@+id/content_column"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="88dp"
+            android:paddingLeft="@dimen/mk_gutter"
+            android:paddingRight="@dimen/mk_gutter"
+            android:paddingTop="8dp">
+
+            <include layout="@layout/part_header" />
+
+            <include layout="@layout/card_media" />
+
+            <include layout="@layout/card_device" />
+
+            <include layout="@layout/card_options" />
+
+            <include layout="@layout/card_actions" />
+        </LinearLayout>
+    </ScrollView>
+
+    <include layout="@layout/part_message_bar" />
+</FrameLayout>

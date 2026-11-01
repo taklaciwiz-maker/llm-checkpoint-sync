@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Snackbar-like message bar shown at the bottom of the screen. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/message_bar"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_gravity="bottom|center_horizontal"
+    android:layout_margin="12dp"
+    android:background="@drawable/bg_snack"
+    android:elevation="6dp"
+    android:gravity="center_vertical"
+    android:minHeight="52dp"
+    android:orientation="horizontal"
+    android:paddingBottom="6dp"
+    android:paddingLeft="16dp"
+    android:paddingRight="6dp"
+    android:paddingTop="6dp"
+    android:visibility="gone">
+
+    <TextView
+        android:id="@+id/message_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:maxLines="4"
+        android:ellipsize="end"
+        android:textColor="@color/mk_snack_text"
+        android:textSize="14sp" />
+
+    <Button
+        android:id="@+id/message_action"
+        style="@style/MK.Button.Text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="4dp"
+        android:layout_marginStart="4dp"
+        android:text="@string/msg_open"
+        android:textColor="@color/mk_snack_action"
+        android:visibility="gone" />
+</LinearLayout>

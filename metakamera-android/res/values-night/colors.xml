@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mk_bg">#FF0E1014</color>
+    <color name="mk_card">#FF181B21</color>
+    <color name="mk_card_stroke">#FF262A32</color>
+    <color name="mk_field">#FF14171C</color>
+    <color name="mk_text">#FFE6E9EE</color>
+    <color name="mk_text2">#FFA2ABB8</color>
+    <color name="mk_hint">#FF6F7886</color>
+    <color name="mk_accent">#FF8FAEFF</color>
+    <color name="mk_on_accent">#FF0B1A40</color>
+    <color name="mk_accent_soft">#FF22304F</color>
+    <color name="mk_disabled_bg">#FF2A2E36</color>
+    <color name="mk_disabled_text">#FF6B7380</color>
+    <color name="mk_success">#FF81C995</color>
+    <color name="mk_error">#FFF28B82</color>
+    <color name="mk_warn">#FFFDD663</color>
+    <color name="mk_divider">#FF2A2E36</color>
+    <color name="mk_selected">#338FAEFF</color>
+    <color name="mk_thumb_bg">#FF23272E</color>
+    <color name="mk_ripple">#33FFFFFF</color>
+    <color name="mk_ripple_on_accent">#330B1A40</color>
+    <color name="mk_snack_bg">#FFE6E9EE</color>
+    <color name="mk_snack_text">#FF161A1F</color>
+    <color name="mk_snack_action">#FF2F5BEA</color>
+</resources>

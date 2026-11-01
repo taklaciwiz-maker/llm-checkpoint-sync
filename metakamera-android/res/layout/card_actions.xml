@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/card_actions"
+    style="@style/MK.Card">
+
+    <Button
+        android:id="@+id/btn_process"
+        style="@style/MK.Button.Primary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/process" />
+
+    <ProgressBar
+        android:id="@+id/overall_progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:max="1000"
+        android:progressTint="@color/mk_accent"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/job_status"
+        style="@style/MK.Secondary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/btn_save_all"
+        style="@style/MK.Button.Tonal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:drawableLeft="@drawable/ic_gallery"
+        android:drawablePadding="8dp"
+        android:drawableStart="@drawable/ic_gallery"
+        android:drawableTint="@color/btn_tonal_text"
+        android:text="@string/save_all" />
+
+    <TextView
+        style="@style/MK.Secondary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/footer_note"
+        android:textSize="12sp" />
+</LinearLayout>

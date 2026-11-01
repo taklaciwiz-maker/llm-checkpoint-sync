@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon foreground (108dp canvas, 66dp safe zone): camera body with a lens cut-out
+     and a small "metadata tag" badge. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- body + viewfinder bump (clockwise); the lens circle is counter-clockwise, so the default
+         non-zero fill rule cuts it out (android:fillType is API 24 and unavailable to aapt here) -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M34,40h40a6,6 0 0 1 6,6v26a6,6 0 0 1 -6,6h-40a6,6 0 0 1 -6,-6v-26a6,6 0 0 1 6,-6zM42,59a12,12 0 1 0 24,0a12,12 0 1 0 -24,0zM43,40l4,-6h14l4,6z" />
+    <!-- inner lens -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M47,59a7,7 0 1 0 14,0a7,7 0 1 0 -14,0z" />
+    <!-- flash dot -->
+    <path android:fillColor="@color/ic_launcher_bg"
+        android:pathData="M70,47a2.5,2.5 0 1 0 5,0a2.5,2.5 0 1 0 -5,0z" />
+    <!-- tag badge with separation ring -->
+    <path android:fillColor="@color/ic_launcher_bg"
+        android:pathData="M61,75a14,14 0 1 0 28,0a14,14 0 1 0 -28,0z" />
+    <path android:fillColor="@color/ic_launcher_badge"
+        android:pathData="M64,75a11,11 0 1 0 22,0a11,11 0 1 0 -22,0z" />
+    <path android:fillColor="@color/ic_launcher_badge_lines"
+        android:pathData="M69.5,70.5h11v2.2h-11zM69.5,73.9h11v2.2h-11zM69.5,77.3h7v2.2h-7z" />
+</vector>

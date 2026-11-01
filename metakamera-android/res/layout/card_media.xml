@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/card_media"
+    style="@style/MK.Card">
+
+    <TextView
+        style="@style/MK.CardTitle"
+        android:text="@string/card_media_title" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_pick_gallery"
+            style="@style/MK.Button.Tonal"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:drawableLeft="@drawable/ic_gallery"
+            android:drawablePadding="8dp"
+            android:drawableStart="@drawable/ic_gallery"
+            android:drawableTint="@color/btn_tonal_text"
+            android:text="@string/pick_gallery" />
+
+        <Space
+            android:layout_width="8dp"
+            android:layout_height="1dp" />
+
+        <Button
+            android:id="@+id/btn_pick_files"
+            style="@style/MK.Button.Tonal"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:drawableLeft="@drawable/ic_folder"
+            android:drawablePadding="8dp"
+            android:drawableStart="@drawable/ic_folder"
+            android:drawableTint="@color/btn_tonal_text"
+            android:text="@string/pick_files" />
+    </LinearLayout>
+
+    <TextView
+        style="@style/MK.Secondary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="@string/hint_location"
+        android:textSize="12sp" />
+
+    <LinearLayout
+        android:id="@+id/selection_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/selection_count"
+            style="@style/MK.Body"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFamily="sans-serif-medium" />
+
+        <Button
+            android:id="@+id/btn_clear"
+            style="@style/MK.Button.Text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/clear_all" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/empty_text"
+        style="@style/MK.Secondary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingBottom="16dp"
+        android:paddingLeft="8dp"
+        android:paddingRight="8dp"
+        android:paddingTop="20dp"
+        android:text="@string/empty_selection" />
+
+    <LinearLayout
+        android:id="@+id/items_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:animateLayoutChanges="false"
+        android:orientation="vertical" />
+</LinearLayout>

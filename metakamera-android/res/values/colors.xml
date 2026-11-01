@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mk_bg">#FFF3F5F9</color>
+    <color name="mk_card">#FFFFFFFF</color>
+    <color name="mk_card_stroke">#FFE3E7EE</color>
+    <color name="mk_field">#FFF8F9FC</color>
+    <color name="mk_text">#FF161A1F</color>
+    <color name="mk_text2">#FF5B6573</color>
+    <color name="mk_hint">#FF8A94A3</color>
+    <color name="mk_accent">#FF2F5BEA</color>
+    <color name="mk_on_accent">#FFFFFFFF</color>
+    <color name="mk_accent_soft">#FFE6ECFF</color>
+    <color name="mk_disabled_bg">#FFE2E5EA</color>
+    <color name="mk_disabled_text">#FF9AA3AF</color>
+    <color name="mk_success">#FF1E8E3E</color>
+    <color name="mk_error">#FFC5221F</color>
+    <color name="mk_warn">#FFB06000</color>
+    <color name="mk_divider">#FFE6E9EF</color>
+    <color name="mk_selected">#1F2F5BEA</color>
+    <color name="mk_thumb_bg">#FFE9EDF3</color>
+    <color name="mk_ripple">#1F000000</color>
+    <color name="mk_ripple_on_accent">#33FFFFFF</color>
+    <color name="mk_snack_bg">#FF222831</color>
+    <color name="mk_snack_text">#FFFFFFFF</color>
+    <color name="mk_snack_action">#FF9DB6FF</color>
+    <color name="ic_launcher_bg">#FF2F5BEA</color>
+    <color name="ic_launcher_badge">#FFFFC34D</color>
+    <color name="ic_launcher_badge_lines">#FF1B2A66</color>
+</resources>

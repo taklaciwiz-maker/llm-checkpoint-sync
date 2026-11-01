@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="mk_gutter">16dp</dimen>
+    <dimen name="mk_card_padding">16dp</dimen>
+    <dimen name="mk_card_gap">12dp</dimen>
+    <dimen name="mk_thumb">64dp</dimen>
+    <dimen name="mk_content_max_width">720dp</dimen>
+</resources>

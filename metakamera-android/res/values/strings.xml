@@ -1,4 +1,134 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MetaKamera</string>
+    <string name="app_subtitle">Fotoğraf ve videolarınızın cihaz bilgisini dilediğiniz telefona göre düzenleyin</string>
+    <string name="help_button">Nasıl çalışır?</string>
+
+    <!-- 1. Media -->
+    <string name="card_media_title">1 · Fotoğraf ve video seç</string>
+    <string name="pick_gallery">Galeriden Seç</string>
+    <string name="pick_files">Dosyalardan Seç</string>
+    <string name="hint_location">İpucu: Konum (GPS) bilgisinin eksiksiz korunması için «Dosyalardan Seç» seçeneğini kullanın.</string>
+    <string name="selection_count">%1$d dosya seçildi</string>
+    <string name="clear_all">Temizle</string>
+    <string name="empty_selection">Henüz dosya seçilmedi. Düzenlemek istediğiniz fotoğraf veya videoları ekleyin.</string>
+
+    <!-- 2. Device -->
+    <string name="card_device_title">2 · Hedef telefon</string>
+    <string name="pick_device">Telefon Seç</string>
+    <string name="device_loading">Telefon listesi yükleniyor…</string>
+    <string name="device_load_error">Telefon listesi yüklenemedi</string>
+    <string name="device_none">Henüz telefon seçilmedi</string>
+    <string name="device_detail">%1$d · %2$s · %3$s</string>
+
+    <!-- 3. Options -->
+    <string name="card_options_title">3 · Seçenekler</string>
+    <string name="opt_icc">ICC profilindeki cihaz marka/model bilgisini değiştir</string>
+    <string name="opt_lens">Lens bilgisini hedef cihaza göre değiştir</string>
+    <string name="opt_software">Yazılım (Software) bilgisini hedef cihaza göre ayarla</string>
+    <string name="opt_traces">Orijinal markayı ele veren MakerNote ve seri numaralarını temizle</string>
+    <string name="opt_xmp">XMP içindeki cihaz bilgisini güncelle</string>
+    <string name="advanced_show">Gelişmiş ▾</string>
+    <string name="advanced_hide">Gelişmiş ▴</string>
+    <string name="advanced_note">Alanlar seçilen telefona göre doldurulur. Burada değiştirdiğiniz değerler yukarıdaki seçeneklerden bağımsız olarak uygulanır; boşalttığınız alan dosyadan silinir.</string>
+    <string name="adv_make">Make (marka)</string>
+    <string name="adv_model">Model</string>
+    <string name="adv_software">Software (yazılım)</string>
+    <string name="adv_lens_make">LensMake (lens markası)</string>
+    <string name="adv_lens_model">LensModel (lens modeli)</string>
+    <string name="adv_host">HostComputer</string>
+    <string name="adv_icc_mfr">ICC üretici imzası (4 harf)</string>
+    <string name="adv_icc_model">ICC model imzası (4 harf)</string>
+    <string name="adv_empty_hint">(boş)</string>
+    <string name="adv_icc_hint">örn. APPL</string>
+    <string name="adv_icc_keep_hint">(mevcut değer korunur)</string>
+    <string name="adv_edited_suffix"> · değiştirildi</string>
+    <string name="opt_desc_tags">ICC\'ye cihaz açıklama etiketleri ekle (dmnd/dmdd)</string>
+    <string name="reset_advanced">Varsayılana dön</string>
+    <string name="gallery_section">Galeriye kaydetme</string>
+    <string name="album_label">Albüm</string>
+    <string name="album_camera">DCIM/Camera (Kamera)</string>
+    <string name="album_app">Pictures/MetaKamera</string>
+    <string name="opt_keep_name">Orijinal dosya adını koru</string>
+    <string name="keep_name_note">Kapalıyken dosyalar IMG_20250101_123000_1.jpg biçiminde adlandırılır.</string>
+
+    <!-- 4. Actions -->
+    <string name="process">Metadata\'yı Düzenle</string>
+    <string name="processing">İşleniyor…</string>
+    <string name="save_all">Tümünü Galeriye Kopyala</string>
+    <string name="footer_note">Yalnızca metadata değiştirilir; fotoğraf pikselleri ve video karelerine dokunulmaz. Orijinal dosyalarınız olduğu gibi kalır.</string>
+    <string name="job_running">İşleniyor: %1$d / %2$d · %3$s</string>
+    <string name="job_done_all">Tamamlandı: %1$d dosya düzenlendi.</string>
+    <string name="job_done_mixed">Tamamlandı: %1$d başarılı, %2$d hatalı.</string>
+    <string name="job_saving">Galeriye kopyalanıyor…</string>
+
+    <!-- Item rows -->
+    <string name="item_current">Mevcut: %1$s</string>
+    <string name="item_new">Yeni: %1$s</string>
+    <string name="item_no_device">Cihaz bilgisi yok</string>
+    <string name="item_reading">Bilgiler okunuyor…</string>
+    <string name="item_read_error">Okunamadı: %1$s</string>
+    <string name="item_error">Hata: %1$s</string>
+    <string name="item_queued">Sırada bekliyor</string>
+    <string name="item_processing">Düzenleniyor… %%%1$d</string>
+    <string name="item_icc">ICC cihazı: %1$s</string>
+    <string name="item_icc_none">yok (0)</string>
+    <string name="item_details_show">Ayrıntılar ▾</string>
+    <string name="item_details_hide">Ayrıntıları gizle ▴</string>
+    <string name="item_changes">Değişiklikler:</string>
+    <string name="item_warnings">Uyarılar:</string>
+    <string name="item_no_changes">Değişiklik kaydı yok.</string>
+    <string name="item_output">Çıktı: %1$s (%2$s)</string>
+    <string name="item_save">Galeriye Kopyala</string>
+    <string name="item_saving">Kopyalanıyor…</string>
+    <string name="item_open">Aç</string>
+    <string name="item_share">Paylaş</string>
+    <string name="item_saved">Galeriye kaydedildi: %1$s</string>
+    <string name="item_save_error">Galeriye kaydedilemedi: %1$s</string>
+    <string name="item_remove">Kaldır</string>
+    <string name="item_thumb">Önizleme</string>
+    <string name="type_photo">Fotoğraf</string>
+    <string name="type_video">Video</string>
+    <string name="type_file">Dosya</string>
+    <string name="gps_yes">Konum bilgisi: var</string>
+    <string name="gps_no">Konum bilgisi: yok</string>
+    <string name="gps_masked">Konum bilgisi gizlenmiş — «Dosyalardan Seç» ile tekrar deneyin</string>
+
+    <!-- Messages -->
+    <string name="msg_need_files">Önce fotoğraf veya video seçin.</string>
+    <string name="msg_need_device">Önce hedef telefonu seçin.</string>
+    <string name="msg_max_items">En fazla %1$d dosya seçilebilir.</string>
+    <string name="msg_duplicates">Seçilen dosyalar zaten listede.</string>
+    <string name="msg_job_done">Düzenleme tamamlandı. Dosyaları galeriye kopyalayabilir veya paylaşabilirsiniz.</string>
+    <string name="msg_job_failed">Düzenleme tamamlandı ancak bazı dosyalarda hata oluştu.</string>
+    <string name="msg_saved_one">Galeriye kaydedildi: %1$s</string>
+    <string name="msg_saved_many">%1$d dosya galeriye kaydedildi (%2$s)</string>
+    <string name="msg_saved_partial">%1$d dosya kaydedildi, %2$d dosya kaydedilemedi.</string>
+    <string name="msg_save_failed">Kaydedilemedi: %1$s</string>
+    <string name="msg_need_storage">Galeriye kaydetmek için depolama izni gerekiyor.</string>
+    <string name="msg_no_viewer">Bu dosyayı açabilecek bir uygulama bulunamadı.</string>
+    <string name="msg_no_picker">Dosya seçici açılamadı.</string>
+    <string name="msg_no_share">Paylaşım için uygun bir uygulama bulunamadı.</string>
+    <string name="msg_file_missing">Düzenlenmiş dosya bulunamadı; lütfen yeniden düzenleyin.</string>
+    <string name="msg_db_error">Telefon listesi yüklenemedi: %1$s</string>
+    <string name="msg_open">Aç</string>
+
+    <!-- Device picker -->
+    <string name="picker_title">Telefon Seç</string>
+    <string name="picker_search_hint">Ara: marka, model veya model kodu</string>
+    <string name="picker_all_brands">Tüm markalar</string>
+    <string name="picker_empty">Sonuç bulunamadı</string>
+    <string name="picker_variant">Model kodu</string>
+    <string name="picker_variant_main">%1$s (ana model)</string>
+    <string name="picker_variants_count">%1$d model kodu</string>
+    <string name="picker_cancel">İptal</string>
+    <string name="picker_ok">Seç</string>
+
+    <!-- Help -->
+    <string name="help_title">Nasıl çalışır?</string>
+    <string name="help_ok">Tamam</string>
+    <string name="help_body">MetaKamera, fotoğraf ve videolarınızın yalnızca metadata (üst veri) kısmını değiştirir. Fotoğraf pikselleri ve video kareleri bayt bayt aynen korunur; yeniden sıkıştırma yapılmaz, kalite kaybı olmaz.\n\nDeğiştirilenler:\n• EXIF Make / Model (marka ve model)\n• İsteğe bağlı olarak Software, LensMake / LensModel ve HostComputer\n• Gömülü ICC renk profilindeki cihaz üreticisi ve modeli\n• XMP içindeki cihaz bilgileri ve videolardaki marka/model etiketleri\n• İsteğe bağlı: orijinal markayı ele veren MakerNote ve seri numaraları temizlenir\n\nKorunanlar: çekim tarihi ve saati, konum (GPS) bilgisi, çözünürlük, yön ve diğer tüm veriler.\n\nDesteklenen biçimler: JPEG, HEIC/HEIF, AVIF, PNG, WebP, MP4, MOV, 3GP.\n\nKullanım: 1) Fotoğraf veya videoları seçin, 2) hedef telefonu seçin, 3) «Metadata\'yı Düzenle» düğmesine dokunun, ardından sonucu galeriye kopyalayın ya da paylaşın. Orijinal dosyalarınız değiştirilmez; düzenlenen kopyalar ayrıca kaydedilir.\n\nİpucu: Galeriden seçilen bazı dosyalarda konum bilgisi sistem tarafından gizlenebilir. Konumun eksiksiz korunması için «Dosyalardan Seç» seçeneğini kullanın.</string>
+
+    <!-- Sharing -->
+    <string name="share_title">Paylaş</string>
 </resources>
