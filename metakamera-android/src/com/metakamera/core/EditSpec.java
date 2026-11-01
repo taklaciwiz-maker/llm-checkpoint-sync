@@ -25,6 +25,31 @@ public final class EditSpec {
     /** EXIF LensModel (0xA434, Exif IFD); also XMP exifEX:LensModel / aux:Lens. */
     public String lensModel;
 
+    // ------------------------------------------------------------------ chosen camera module
+    // Numeric fields: null = leave untouched; a value = set (create if missing) in EXIF and update
+    // the matching XMP property / video key only where it already exists.
+
+    /** EXIF FocalLength (0x920A, RATIONAL, mm) of the chosen camera, e.g. 6.93. */
+    public Double focalLengthMm;
+    /** EXIF FocalLengthIn35mmFormat (0xA405, SHORT), e.g. 24. */
+    public Integer focalLength35mm;
+    /**
+     * EXIF FNumber (0x829D, RATIONAL), e.g. 1.4. ApertureValue (0x9202) is set to the matching APEX
+     * value (2*log2(N)) and MaxApertureValue (0x9205) is updated when present.
+     */
+    public Double fNumber;
+    /**
+     * EXIF LensSpecification (0xA432, 4 RATIONALs: min focal, max focal, min F at min focal,
+     * min F at max focal) — only UPDATED when the file already has it. null = keep.
+     */
+    public double[] lensSpecification;
+    /**
+     * EXIF PixelXDimension / PixelYDimension (0xA002 / 0xA003) to record — metadata only, the
+     * actual pixel raster is never changed. Must be given together (both null = keep).
+     */
+    public Integer exifImageWidth;
+    public Integer exifImageHeight;
+
     /**
      * Remove the vendor MakerNote (0x927C): the IFD entry is dropped AND its bytes are zero-filled
      * in place (so no vendor strings survive), without moving any other data.
@@ -59,6 +84,12 @@ public final class EditSpec {
         s.hostComputer = hostComputer;
         s.lensMake = lensMake;
         s.lensModel = lensModel;
+        s.focalLengthMm = focalLengthMm;
+        s.focalLength35mm = focalLength35mm;
+        s.fNumber = fNumber;
+        s.lensSpecification = lensSpecification == null ? null : lensSpecification.clone();
+        s.exifImageWidth = exifImageWidth;
+        s.exifImageHeight = exifImageHeight;
         s.removeMakerNote = removeMakerNote;
         s.clearSerials = clearSerials;
         s.editIcc = editIcc;

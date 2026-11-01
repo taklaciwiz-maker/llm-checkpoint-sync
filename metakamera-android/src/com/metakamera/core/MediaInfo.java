@@ -13,6 +13,16 @@ public final class MediaInfo {
     public String lensMake;
     public String lensModel;
 
+    /** EXIF FocalLength in mm, 0 = absent. */
+    public double focalLengthMm;
+    /** EXIF FocalLengthIn35mmFormat, 0 = absent. */
+    public int focalLength35mm;
+    /** EXIF FNumber, 0 = absent. */
+    public double fNumber;
+    /** EXIF PixelXDimension / PixelYDimension, 0 = absent (may differ from the real raster size). */
+    public int exifImageWidth;
+    public int exifImageHeight;
+
     /** EXIF DateTimeOriginal "yyyy:MM:dd HH:mm:ss" (images). */
     public String dateTimeOriginal;
     /** EXIF OffsetTimeOriginal e.g. "+03:00" (images), if present. */
